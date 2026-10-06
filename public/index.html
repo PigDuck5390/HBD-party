@@ -66,15 +66,8 @@
     <div class="sheet" role="dialog" aria-labelledby="gbTitle">
       <header>
         <h2 id="gbTitle">📜 축하 방명록 <small id="gbTotal"></small></h2>
-        <div class="head-btns">
-          <button type="button" id="adminBtn" class="pill admin-btn" hidden>🔒 관리자</button>
-          <button type="button" id="gbClose" class="ghost" aria-label="닫기">✕</button>
-        </div>
+        <button type="button" id="gbClose" class="ghost" aria-label="닫기">✕</button>
       </header>
-      <form id="adminForm" class="admin-form" hidden autocomplete="off">
-        <input id="adminKey" type="password" placeholder="관리자 비밀번호" autocomplete="current-password">
-        <button type="submit" class="primary small">확인</button>
-      </form>
       <form id="gbForm" autocomplete="off">
         <textarea id="gbText" maxlength="300" rows="3" placeholder="생일 축하 메시지를 남겨주세요 💌"></textarea>
         <div class="row">

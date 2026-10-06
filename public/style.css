@@ -366,35 +366,6 @@ button { cursor: pointer; touch-action: manipulation; }
 .gb-item p { margin: 6px 0 0; font-family: system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; font-size: 15px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
 .gb-empty { text-align: center; opacity: 0.6; padding: 20px 0; }
 
-/* ---------- 관리자 ---------- */
-.head-btns { display: flex; align-items: center; gap: 4px; }
-.admin-btn { font-size: 13px; padding: 4px 12px; }
-.admin-btn.on { background: #ffe3ec; border-color: var(--pink); color: var(--pink-dark); }
-.admin-form { display: flex; gap: 8px; padding: 0 18px 12px; }
-.admin-form input {
-  flex: 1;
-  min-width: 0;
-  border: 2px solid #f3dbe6;
-  border-radius: 12px;
-  padding: 8px 12px;
-  font-size: 16px;
-  outline: none;
-  -webkit-user-select: text;
-  user-select: text;
-}
-.admin-form input:focus { border-color: var(--pink); }
-.gb-del {
-  display: none;
-  border: none;
-  background: #ffe3ec;
-  border-radius: 8px;
-  padding: 2px 8px;
-  font-size: 14px;
-  margin-left: 4px;
-}
-.gb-del:hover { background: #ffc9da; }
-.gb-del:disabled { opacity: 0.5; }
-#gbModal.admin .gb-del { display: inline-block; }
 .gb-item.removing { opacity: 0; transform: scale(0.96); transition: opacity 0.25s, transform 0.25s; }
 
 /* ---------- 작은 화면 ---------- */

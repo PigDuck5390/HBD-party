@@ -53,6 +53,7 @@ function clientIp(socket) {
 const app = express();
 app.disable('x-powered-by');
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/healthz', (_req, res) => res.type('text').send('ok'));
 
 const server = http.createServer(app);
@@ -74,7 +75,7 @@ function spawnPoint() {
 }
 
 io.on('connection', (socket) => {
-  socket.emit('hello', { birthdayName: BIRTHDAY_NAME, online: players.size, adminEnabled: ADMIN_KEY !== '' });
+  socket.emit('hello', { birthdayName: BIRTHDAY_NAME, online: players.size });
 
   let player = null;
   let isAdmin = false;
@@ -97,8 +98,6 @@ io.on('connection', (socket) => {
     }
     adminFails.delete(ip);
     isAdmin = true;
-    reply({ ok: true });
-
     // Upstash 화면에서 직접 고친 내용이 있을 수 있으니 저장소에서 다시 읽어 모두에게 동기화
     try {
       guestbook = (await store.load()).slice(0, GUESTBOOK_LIMIT);
@@ -106,6 +105,7 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('[guestbook] 다시 불러오기 실패:', err.message);
     }
+    reply({ ok: true, guestbook });
   });
 
   socket.on('admin:logout', () => { isAdmin = false; });

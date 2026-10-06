@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>방명록 관리</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📜</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    html, body { overflow: auto; position: static; height: auto; min-height: 100%; }
+    html { background: #efe6ff; }
+    body {
+      background: radial-gradient(circle at 50% 0%, #ffd6e4, #f3e8ff 60%, #efe6ff) no-repeat;
+      min-height: 100vh;
+      -webkit-user-select: text;
+      user-select: text;
+    }
+    .wrap { width: min(640px, 100%); margin: 0 auto; padding: calc(24px + var(--safe-t)) 16px calc(32px + var(--safe-b)); }
+    .login { margin-top: 12vh; }
+    .login h1 { font-size: 24px; }
+    .login p { margin: 0; font-size: 14px; opacity: 0.65; }
+    #keyInput {
+      border: 2px solid #f3dbe6;
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 17px;
+      text-align: center;
+      outline: none;
+    }
+    #keyInput:focus { border-color: var(--pink); }
+    #loginError { color: #e0315f; min-height: 1.3em; }
+    .bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .bar h1 { margin: 0; font-size: 24px; font-weight: normal; white-space: nowrap; }
+    .bar .pill { white-space: nowrap; }
+    .login { margin-left: auto; margin-right: auto; }
+    .bar h1 small { font-size: 15px; opacity: 0.55; }
+    .bar .btns { display: flex; gap: 6px; }
+    .bar a.pill { text-decoration: none; color: inherit; }
+    #list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+    .gb-del {
+      border: none;
+      background: #ffe3ec;
+      border-radius: 10px;
+      padding: 4px 10px;
+      font-size: 14px;
+      margin-left: 6px;
+    }
+    .gb-del:hover { background: #ffc9da; }
+    .gb-del:disabled { opacity: 0.5; }
+    .gb-item.removing { opacity: 0; transform: scale(0.96); transition: opacity 0.25s, transform 0.25s; }
+    #toasts { top: auto; bottom: calc(24px + var(--safe-b)); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <!-- 로그인 -->
+    <form id="loginForm" class="card login" autocomplete="off">
+      <div class="confetti-top">🔒</div>
+      <h1>방명록 관리자</h1>
+      <p>관리자 비밀번호를 입력해 주세요.</p>
+      <input id="keyInput" type="password" placeholder="비밀번호" autocomplete="current-password" autofocus>
+      <button id="loginBtn" class="primary" type="submit">들어가기</button>
+      <p id="loginError"></p>
+    </form>
+
+    <!-- 관리 화면 -->
+    <section id="panel" hidden>
+      <div class="bar">
+        <h1>📜 방명록 관리 <small id="total"></small></h1>
+        <div class="btns">
+          <a class="pill" href="/">🎂 파티로</a>
+          <button type="button" id="logoutBtn" class="pill">로그아웃</button>
+        </div>
+      </div>
+      <ul id="list"></ul>
+    </section>
+  </div>
+  <div id="toasts"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    (() => {
+      'use strict';
+      const $ = (id) => document.getElementById(id);
+      const socket = io();
+      let adminKey = null; // 이 페이지가 열려 있는 동안만 메모리에 보관
+      let guestbook = [];
+
+      function toast(text, ms = 2200) {
+        const el = document.createElement('div');
+        el.className = 'toast';
+        el.textContent = text;
+        $('toasts').appendChild(el);
+        setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 400); }, ms);
+      }
+      const fmtTime = (ts) => {
+        const d = new Date(ts);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      };
+
+      function item(e) {
+        const li = document.createElement('li');
+        li.className = 'gb-item';
+        li.dataset.id = e.id;
+        li.style.setProperty('--h', e.hue);
+        const head = document.createElement('div');
+        head.className = 'head';
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        const name = document.createElement('strong');
+        name.textContent = e.name;
+        const time = document.createElement('time');
+        time.textContent = fmtTime(e.ts);
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'gb-del';
+        del.textContent = '🗑 삭제';
+        head.append(dot, name, time, del);
+        const p = document.createElement('p');
+        p.textContent = e.text;
+        li.append(head, p);
+        return li;
+      }
+      function render() {
+        const list = $('list');
+        list.textContent = '';
+        if (!guestbook.length) {
+          const li = document.createElement('li');
+          li.className = 'gb-empty';
+          li.textContent = '방명록이 비어 있어요.';
+          list.appendChild(li);
+        } else {
+          for (const e of guestbook) list.appendChild(item(e));
+        }
+        $('total').textContent = `${guestbook.length}개`;
+      }
+
+      function login(key, quiet) {
+        $('loginBtn').disabled = true;
+        socket.timeout(8000).emit('admin:login', { key }, (err, res) => {
+          $('loginBtn').disabled = false;
+          if (err || !res || !res.ok) {
+            adminKey = null;
+            $('panel').hidden = true;
+            $('loginForm').hidden = false;
+            $('loginError').textContent = err ? '서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.' : (res && res.error) || '로그인에 실패했어요.';
+            if (!quiet) $('keyInput').select();
+            return;
+          }
+          adminKey = key;
+          guestbook = res.guestbook || [];
+          $('keyInput').value = '';
+          $('loginError').textContent = '';
+          $('loginForm').hidden = true;
+          $('panel').hidden = false;
+          render();
+        });
+      }
+
+      $('loginForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const key = $('keyInput').value;
+        if (key) login(key, false);
+      });
+      $('logoutBtn').addEventListener('click', () => {
+        adminKey = null;
+        socket.emit('admin:logout');
+        guestbook = [];
+        $('list').textContent = '';
+        $('panel').hidden = true;
+        $('loginForm').hidden = false;
+        $('keyInput').focus();
+      });
+
+      $('list').addEventListener('click', (e) => {
+        const btn = e.target.closest('.gb-del');
+        if (!btn || !adminKey) return;
+        const li = btn.closest('.gb-item');
+        const entry = guestbook.find((g) => g.id === li.dataset.id);
+        const preview = entry ? `${entry.name}: ${entry.text.slice(0, 60)}` : '';
+        if (!window.confirm(`이 글을 삭제할까요?\n\n${preview}`)) return;
+        btn.disabled = true;
+        socket.timeout(8000).emit('guestbook:delete', { id: li.dataset.id }, (err, res) => {
+          btn.disabled = false;
+          if (err) return toast('삭제에 실패했어요. 다시 시도해 주세요.');
+          if (!res || !res.ok) return toast((res && res.error) || '삭제에 실패했어요.');
+          toast('삭제했어요');
+        });
+      });
+
+      // 실시간 반영
+      socket.on('connect', () => { if (adminKey) login(adminKey, true); });
+      socket.on('guestbook:new', (e) => {
+        if (!adminKey) return;
+        guestbook.unshift(e);
+        render();
+      });
+      socket.on('guestbook:deleted', (id) => {
+        if (!adminKey) return;
+        guestbook = guestbook.filter((e) => e.id !== id);
+        const li = [...$('list').children].find((el) => el.dataset.id === id);
+        if (!li) return render();
+        li.classList.add('removing');
+        setTimeout(render, 250);
+      });
+      socket.on('guestbook:all', (list) => {
+        if (!adminKey) return;
+        guestbook = Array.isArray(list) ? list : [];
+        render();
+      });
+    })();
+  </script>
+</body>
+</html>
