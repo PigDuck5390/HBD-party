@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const KEY = 'hbd:guestbook';
+const GIFTS_KEY = 'hbd:gifts';
 
 function upstashStore(url, token, limit) {
   async function cmd(args) {
@@ -46,11 +47,31 @@ function upstashStore(url, token, limit) {
     async setSetting(name, value) {
       await cmd(['SET', `hbd:setting:${name}`, String(value)]);
     },
+    // 선물: 목록(hbd:gifts)에는 id만, 본문은 hbd:gift:<id>에 { ...정보, img: base64 }
+    async loadGifts() {
+      const ids = (await cmd(['LRANGE', GIFTS_KEY, '0', '-1'])) || [];
+      const gifts = [];
+      for (const id of ids) {
+        const raw = await cmd(['GET', `hbd:gift:${id}`]);
+        try { if (raw) gifts.push(JSON.parse(raw)); } catch { /* 무시 */ }
+      }
+      return gifts;
+    },
+    async addGift(gift) {
+      await cmd(['SET', `hbd:gift:${gift.id}`, JSON.stringify(gift)]);
+      await cmd(['RPUSH', GIFTS_KEY, gift.id]);
+    },
+    async removeGift(id) {
+      await cmd(['DEL', `hbd:gift:${id}`]);
+      await cmd(['LREM', GIFTS_KEY, '0', id]);
+    },
   };
 }
 
 function fileStore(file) {
   const settingsFile = path.join(path.dirname(file), 'settings.json');
+  const giftDir = path.join(path.dirname(file), 'gifts');
+  const giftFile = (id) => path.join(giftDir, `${String(id).replace(/[^\w-]/g, '')}.json`);
   const readSettings = () => {
     try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')) || {}; } catch { return {}; }
   };
@@ -81,6 +102,22 @@ function fileStore(file) {
       all[name] = String(value);
       fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
       fs.writeFileSync(settingsFile, JSON.stringify(all));
+    },
+    async loadGifts() {
+      let names = [];
+      try { names = fs.readdirSync(giftDir).filter((n) => n.endsWith('.json')); } catch { return []; }
+      const gifts = [];
+      for (const n of names) {
+        try { gifts.push(JSON.parse(fs.readFileSync(path.join(giftDir, n), 'utf8'))); } catch { /* 무시 */ }
+      }
+      return gifts.sort((a, b) => a.ts - b.ts);
+    },
+    async addGift(gift) {
+      fs.mkdirSync(giftDir, { recursive: true });
+      fs.writeFileSync(giftFile(gift.id), JSON.stringify(gift));
+    },
+    async removeGift(id) {
+      try { fs.unlinkSync(giftFile(id)); } catch { /* 이미 없음 */ }
     },
   };
 }

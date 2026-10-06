@@ -54,6 +54,12 @@
   let myHue = Math.floor(Math.random() * 360);
   let nearLauncher = -1;
   let guestbook = [];
+  const gifts = new Map(); // 사람들이 놓은 선물상자
+  const giftBits = []; // 선물이 떨어질 때 튀는 색종이
+  let hoverGift = null;
+  const openedGifts = new Set((() => {
+    try { return JSON.parse(store.get('hbd:openedGifts') || '[]'); } catch { return []; }
+  })());
   let muted = store.get('hbd:muted') === '1';
   const fx = { rockets: [], particles: [], flashes: [], dim: 0 };
   const launcherKick = W.launchers.map(() => 0);
@@ -106,10 +112,10 @@
     const el = document.activeElement;
     return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
   };
-  const modalOpen = () => !$('gbModal').hidden;
+  const modalOpen = () => !$('gbModal').hidden || !$('giftModal').hidden;
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeChat(); closeGuestbook(); return; }
+    if (e.key === 'Escape') { closeChat(); closeGuestbook(); closeGift(); return; }
     if (isTyping() || !joined || modalOpen()) return;
     const k = e.key.toLowerCase();
     if (MOVE_KEYS.includes(k)) { keys.add(k); e.preventDefault(); }
@@ -182,6 +188,19 @@
   function sfx(kind, vol = 1) {
     if (!actx || muted || vol <= 0.02) return;
     const t0 = actx.currentTime;
+    if (kind === 'pop') {
+      const o = actx.createOscillator();
+      const g = actx.createGain();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(220, t0);
+      o.frequency.exponentialRampToValueAtTime(90, t0 + 0.18);
+      g.gain.setValueAtTime(0.12 * vol, t0);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+      o.connect(g).connect(actx.destination);
+      o.start(t0);
+      o.stop(t0 + 0.22);
+      return;
+    }
     if (kind === 'launch') {
       const o = actx.createOscillator();
       const g = actx.createGain();
@@ -638,6 +657,151 @@
     oval(ctx, x, y - s - 12, 4, 4, g.r);
   }
 
+  // ---------- 선물상자 (사람들이 놓은 것) ----------
+  const DROP_TIME = 0.75;
+  const DROP_HEIGHT = 420;
+  function addGift(meta, animate) {
+    const g = { ...meta, dropT: animate ? now() : -100, landed: !animate, seed: Math.random() * 10 };
+    gifts.set(g.id, g);
+    return g;
+  }
+  function giftBurst(x, y) {
+    for (let i = 0; i < 26; i++) {
+      const a = -Math.PI * (0.1 + Math.random() * 0.8);
+      const sp = 90 + Math.random() * 160;
+      giftBits.push({
+        x, y: y - 20, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 0.9 + Math.random() * 0.5, max: 1.4, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 14,
+        c: PALETTE[i % PALETTE.length],
+      });
+    }
+  }
+  function updateGifts(dt, t) {
+    for (const g of gifts.values()) {
+      if (!g.landed && t - g.dropT >= DROP_TIME) {
+        g.landed = true;
+        giftBurst(g.x, g.y);
+        sfx('pop', volumeAt(g.x, g.y));
+      }
+    }
+    for (let k = giftBits.length - 1; k >= 0; k--) {
+      const b = giftBits[k];
+      b.vy += 380 * dt;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.rot += b.vr * dt;
+      b.life -= dt;
+      if (b.life <= 0) giftBits.splice(k, 1);
+    }
+  }
+  function drawGiftBits() {
+    for (const b of giftBits) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, b.life / 0.4);
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.rot);
+      ctx.fillStyle = b.c;
+      ctx.fillRect(-4, -2, 8, 4);
+      ctx.restore();
+    }
+  }
+  function drawDroppedGift(g, t) {
+    const age = t - g.dropT;
+    let lift = 0;
+    let sx = 1;
+    let sy = 1;
+    if (age < DROP_TIME) {
+      const u = age / DROP_TIME;
+      lift = DROP_HEIGHT * (1 - u * u);
+    } else if (age < DROP_TIME + 0.4) {
+      const u = (age - DROP_TIME) / 0.4;
+      const k = Math.sin(u * Math.PI) * (1 - u);
+      sx = 1 + k * 0.35;
+      sy = 1 - k * 0.3;
+    } else if (hoverGift === g) {
+      lift = Math.abs(Math.sin(t * 6)) * 5;
+    }
+    const s = 40;
+    const { x, y } = g;
+    // 그림자는 땅에 고정, 높이 있을수록 작게
+    const sh = 1 - Math.min(1, lift / DROP_HEIGHT) * 0.6;
+    oval(ctx, x + 3, y + 1, 26 * sh, 8 * sh, 'rgba(90,30,70,0.18)');
+
+    ctx.save();
+    ctx.translate(x, y - lift);
+    ctx.scale(sx, sy);
+    if (lift > 30) {
+      // 떨어지는 동안 작은 낙하산 풍선
+      ctx.strokeStyle = 'rgba(120,80,110,0.6)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-s / 2, -s - 10);
+      ctx.lineTo(-14, -s - 54);
+      ctx.moveTo(s / 2, -s - 10);
+      ctx.lineTo(14, -s - 54);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(0, -s - 58, 30, 18, 0, Math.PI, 0);
+      ctx.closePath();
+      ctx.fillStyle = g.r === '#ffffff' ? '#ff8fab' : g.r;
+      ctx.fill();
+    }
+    ctx.fillStyle = g.c;
+    ctx.fillRect(-s / 2, -s, s, s);
+    ctx.fillStyle = 'rgba(0,0,0,0.1)';
+    ctx.fillRect(s / 2 - 10, -s, 10, s);
+    ctx.fillStyle = g.c;
+    ctx.fillRect(-s / 2 - 3, -s - 12, s + 6, 13);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.fillRect(-s / 2 - 3, -s - 12, s + 6, 13);
+    ctx.fillStyle = g.r;
+    ctx.fillRect(-5, -s - 12, 10, s + 12);
+    oval(ctx, -10, -s - 17, 10, 6, g.r);
+    oval(ctx, 10, -s - 17, 10, 6, g.r);
+    oval(ctx, 0, -s - 15, 5, 5, g.r);
+    ctx.restore();
+
+    // 아직 안 열어본 선물은 반짝반짝
+    if (g.landed && !openedGifts.has(g.id)) {
+      ctx.fillStyle = '#ffd166';
+      for (let k = 0; k < 3; k++) {
+        const p = (t * 0.8 + k / 3 + g.seed) % 1;
+        const a = g.seed + k * 2.1;
+        const r = 3.5 * Math.sin(p * Math.PI);
+        if (r > 0.3) star(x + Math.cos(a) * 30, y - 26 + Math.sin(a) * 16 - p * 18, r * 1.6, r * 0.6);
+      }
+    }
+  }
+  function drawGiftTag(g, t) {
+    const near = me && Math.hypot(me.x - g.x, me.y - g.y) < 90;
+    if (!g.landed || (hoverGift !== g && !near)) return;
+    const text = `🎁 ${g.name}님의 선물`;
+    ctx.font = `13px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const w = ctx.measureText(text).width + 16;
+    const y = g.y - 76 + Math.sin(t * 4) * 2;
+    rrect(ctx, g.x - w / 2, y - 11, w, 22, 11);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fill();
+    ctx.strokeStyle = g.c;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#3a2a44';
+    ctx.fillText(text, g.x, y + 1);
+  }
+  // 화면 좌표 -> 맵 좌표에서 선물 찾기 (앞에 있는 것 우선)
+  function giftAt(clientX, clientY) {
+    const wx = (clientX - vw / 2) / scale + cam.x;
+    const wy = (clientY - vh / 2) / scale + cam.y;
+    let best = null;
+    for (const g of gifts.values()) {
+      if (!g.landed) continue;
+      if (Math.abs(wx - g.x) < 28 && wy > g.y - 66 && wy < g.y + 10 && (!best || g.y > best.y)) best = g;
+    }
+    return best;
+  }
+
   function drawBalloons(b, t, bi) {
     const { x, y } = b;
     oval(ctx, x, y, 14, 5, 'rgba(90,30,70,0.15)');
@@ -1055,6 +1219,7 @@
       if (p.moving || d > 2) p.walk += dt * 13;
     }
 
+    updateGifts(dt, t);
     updateFx(dt);
     updateCamera(dt, false);
   }
@@ -1078,16 +1243,19 @@
     ents.push({ y: W.cake.y + W.cake.ry, d: () => drawCake(t) });
     W.launchers.forEach((L, i) => ents.push({ y: L.y, d: () => drawLauncher(L, i, t) }));
     W.gifts.forEach((g) => ents.push({ y: g.y, d: () => drawGift(g) }));
+    for (const g of gifts.values()) ents.push({ y: g.y - 0.01, d: () => drawDroppedGift(g, t) });
     W.balloons.forEach((b, i) => ents.push({ y: b.y, d: () => drawBalloons(b, t, i) }));
     for (const p of players.values()) ents.push({ y: p.y + (p === me ? 0.01 : 0), d: () => drawPlayer(p, t) });
     ents.sort((a, b) => a.y - b.y);
     for (const e of ents) e.d();
 
+    drawGiftBits();
     drawFx(t);
 
     const list = [...players.values()].sort((a, b) => (a === me) - (b === me) || a.y - b.y);
     for (const p of list) drawNameTag(p, t);
     drawLauncherHint(t);
+    for (const g of gifts.values()) drawGiftTag(g, t);
     for (const p of list) drawBubble(p, t);
   }
 
@@ -1284,6 +1452,121 @@
     });
   });
 
+  // 선물: 사진 올리기 / 열어보기
+  const giftModal = $('giftModal');
+  const giftFile = $('giftFile');
+  const btnGift = $('btnGift');
+  let shownGiftId = null;
+  const fmtFull = (ts) => {
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getMonth() + 1}월 ${d.getDate()}일 ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  function openGift(g) {
+    closeChat();
+    setDpad(0, 0);
+    keys.clear();
+    shownGiftId = g.id;
+    $('giftTitle').textContent = `${g.name}님의 선물`;
+    $('giftTime').textContent = fmtFull(g.ts);
+    $('giftImg').src = `/gift/${g.id}.jpg`;
+    giftModal.hidden = false;
+    if (!openedGifts.has(g.id)) {
+      openedGifts.add(g.id);
+      store.set('hbd:openedGifts', JSON.stringify([...openedGifts].slice(-200)));
+    }
+    ensureAudio();
+    sfx('pop', 0.8);
+  }
+  function closeGift() {
+    giftModal.hidden = true;
+    shownGiftId = null;
+  }
+  $('giftClose').addEventListener('click', closeGift);
+  giftModal.addEventListener('click', (e) => { if (e.target === giftModal) closeGift(); });
+
+  canvas.addEventListener('click', (e) => {
+    if (!joined) return;
+    const g = giftAt(e.clientX, e.clientY);
+    if (g) openGift(g);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    hoverGift = joined ? giftAt(e.clientX, e.clientY) : null;
+    canvas.style.cursor = hoverGift ? 'pointer' : '';
+  });
+  canvas.addEventListener('pointerleave', () => { hoverGift = null; canvas.style.cursor = ''; });
+
+  // 큰 사진은 브라우저에서 줄이고 JPEG로 다시 저장 (위치정보 등 메타데이터도 사라짐)
+  async function loadImage(file) {
+    if (window.createImageBitmap) {
+      try { return await createImageBitmap(file); } catch { /* 아래 방법으로 */ }
+    }
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return img;
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+  }
+  async function compressImage(file) {
+    const img = await loadImage(file);
+    const iw = img.width || img.naturalWidth;
+    const ih = img.height || img.naturalHeight;
+    if (!iw || !ih) throw new Error('size');
+    let maxDim = 1280;
+    let quality = 0.82;
+    for (let tries = 0; tries < 7; tries++) {
+      const k = Math.min(1, maxDim / Math.max(iw, ih));
+      const w = Math.max(1, Math.round(iw * k));
+      const h = Math.max(1, Math.round(ih * k));
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const cx = c.getContext('2d');
+      cx.fillStyle = '#ffffff'; // 투명 PNG 배경
+      cx.fillRect(0, 0, w, h);
+      cx.drawImage(img, 0, 0, w, h);
+      const blob = await new Promise((res) => c.toBlob(res, 'image/jpeg', quality));
+      if (blob && blob.size <= 600 * 1024) return blob;
+      if (quality > 0.6) quality -= 0.1;
+      else maxDim = Math.round(maxDim * 0.8);
+    }
+    throw new Error('too big');
+  }
+
+  btnGift.addEventListener('click', () => {
+    if (!joined) return;
+    ensureAudio();
+    giftFile.click();
+  });
+  giftFile.addEventListener('change', async () => {
+    const file = giftFile.files && giftFile.files[0];
+    giftFile.value = '';
+    if (!file) return;
+    if (!/^image\//.test(file.type) && !/\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(file.name)) {
+      toast('사진 파일만 선물할 수 있어요.');
+      return;
+    }
+    btnGift.classList.add('busy');
+    toast('선물 포장 중… 🎀', 1800);
+    try {
+      const blob = await compressImage(file);
+      const image = await blob.arrayBuffer();
+      socket.timeout(30000).emit('gift:drop', { image }, (err, res) => {
+        btnGift.classList.remove('busy');
+        if (err) return toast('선물을 보내지 못했어요. 다시 시도해 주세요.');
+        if (!res || !res.ok) return toast((res && res.error) || '선물을 보내지 못했어요.');
+      });
+    } catch {
+      btnGift.classList.remove('busy');
+      toast('이 사진은 열 수 없어요. 다른 사진으로 해 주세요.');
+    }
+  });
+
   // 참가
   const joinScreen = $('join');
   const joinBtn = $('joinBtn');
@@ -1319,6 +1602,8 @@
   });
   socket.on('hello', (d) => {
     setBirthdayName(d.birthdayName);
+    gifts.clear();
+    for (const g of d.gifts || []) addGift(g, false);
     if (!joined) {
       joinBtn.disabled = false;
       joinStatus.textContent = d.online ? `지금 ${d.online}명이 파티 중이에요! 🎈` : '첫 번째 손님이 되어주세요! 🎈';
@@ -1408,6 +1693,17 @@
   });
   socket.on('config', (d) => {
     if (d && d.birthdayName) setBirthdayName(d.birthdayName);
+  });
+  socket.on('gift:new', (g) => {
+    const { by, ...meta } = g;
+    addGift(meta, true);
+    if (g.by === myId) toast('선물을 놓았어요! 🎁', 2000);
+    else toast(`🎁 ${g.name}님이 선물을 놓고 갔어요! 눌러서 열어보세요`, 2600);
+  });
+  socket.on('gift:removed', (id) => {
+    gifts.delete(id);
+    if (hoverGift && hoverGift.id === id) hoverGift = null;
+    if (shownGiftId === id) closeGift();
   });
   socket.on('guestbook:all', (list) => {
     guestbook = Array.isArray(list) ? list : [];

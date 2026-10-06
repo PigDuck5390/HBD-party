@@ -26,6 +26,8 @@
       <button id="btnChat" class="act" type="button" aria-label="채팅"><span>💬</span><small>채팅</small></button>
       <button id="btnFirework" class="act" type="button" aria-label="폭죽"><span>🎆</span><small>폭죽</small></button>
       <button id="btnGuestbook" class="act" type="button" aria-label="방명록"><span>📜</span><small>방명록</small><i class="badge" hidden></i></button>
+      <button id="btnGift" class="act" type="button" aria-label="선물 놓기"><span>🎁</span><small>선물</small></button>
+      <input id="giftFile" type="file" accept="image/*" hidden>
       <button id="btnSound" class="act small" type="button" aria-label="소리"><span>🔊</span></button>
     </div>
 
@@ -76,6 +78,17 @@
         </div>
       </form>
       <ul id="gbList"></ul>
+    </div>
+  </div>
+
+  <!-- 선물 열어보기 -->
+  <div id="giftModal" class="modal gift-modal" hidden>
+    <div class="gift-card" role="dialog" aria-labelledby="giftTitle">
+      <button type="button" id="giftClose" class="ghost gift-close" aria-label="닫기">✕</button>
+      <div class="gift-ribbon">🎁</div>
+      <h2 id="giftTitle"></h2>
+      <div class="gift-photo"><img id="giftImg" alt="선물 사진"></div>
+      <time id="giftTime"></time>
     </div>
   </div>
 

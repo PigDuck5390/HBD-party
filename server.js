@@ -10,6 +10,12 @@ const { createGuestbookStore } = require('./storage');
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS) || 50;
 const GUESTBOOK_LIMIT = 500;
+const MAX_GIFTS = Number(process.env.MAX_GIFTS) || 30;
+const MAX_GIFT_BYTES = 700 * 1024; // 브라우저에서 줄여서 보내므로 보통 100~400KB
+const GIFT_COLORS = [
+  ['#ff8fab', '#ffffff'], ['#7ad3f7', '#ff6fa3'], ['#ffd166', '#6c63ff'], ['#b39ddb', '#ffd166'],
+  ['#8bd3a5', '#ff6fa3'], ['#ffb38a', '#7a5cff'], ['#ff6f91', '#ffe066'], ['#6c9bff', '#ffffff'],
+];
 
 // 한 줄 텍스트: 제어문자 제거, 공백 정리, 글자 수(이모지 포함) 제한
 function cleanText(value, max) {
@@ -58,14 +64,42 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/admin', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('/healthz', (_req, res) => res.type('text').send('ok'));
 
+// 선물 사진: id마다 내용이 바뀌지 않으므로 오래 캐시
+const gifts = new Map(); // id -> { meta, buf }
+app.get('/gift/:id.jpg', (req, res) => {
+  const g = gifts.get(req.params.id);
+  if (!g) return res.status(404).end();
+  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  res.type('image/jpeg').send(g.buf);
+});
+
 const server = http.createServer(app);
-const io = new Server(server, { maxHttpBufferSize: 16 * 1024 });
+const io = new Server(server, { maxHttpBufferSize: 1_200_000 });
 
 const players = new Map();
 const store = createGuestbookStore({ limit: GUESTBOOK_LIMIT });
 let guestbook = []; // 최신 글이 앞
 
 const publicPlayer = (p) => ({ id: p.id, name: p.name, hue: p.hue, x: p.x, y: p.y, dx: p.dx, dy: p.dy, m: p.m });
+
+const giftList = () => [...gifts.values()].map((g) => g.meta);
+
+// 플레이어 발밑 근처에서 비어 있는 자리 찾기
+function giftSpot(px, py) {
+  const free = (x, y) =>
+    !WORLD.collides(x, y) &&
+    [...gifts.values()].every((g) => Math.hypot(g.meta.x - x, g.meta.y - y) > 46);
+  if (free(px, py + 34)) return { x: Math.round(px), y: Math.round(py + 34) };
+  for (let r = 40; r <= 320; r += 30) {
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2 + r;
+      const x = px + Math.cos(a) * r;
+      const y = py + 30 + Math.sin(a) * r * 0.7;
+      if (free(x, y)) return { x: Math.round(x), y: Math.round(y) };
+    }
+  }
+  return null;
+}
 
 function spawnPoint() {
   for (let i = 0; i < 40; i++) {
@@ -77,11 +111,11 @@ function spawnPoint() {
 }
 
 io.on('connection', (socket) => {
-  socket.emit('hello', { birthdayName, online: players.size });
+  socket.emit('hello', { birthdayName, online: players.size, gifts: giftList() });
 
   let player = null;
   let isAdmin = false;
-  const last = { chat: 0, firework: 0, guestbook: 0 };
+  const last = { chat: 0, firework: 0, guestbook: 0, gift: 0 };
 
   socket.on('admin:login', async (d, ack) => {
     const reply = typeof ack === 'function' ? ack : () => {};
@@ -107,7 +141,7 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('[guestbook] 다시 불러오기 실패:', err.message);
     }
-    reply({ ok: true, guestbook, birthdayName });
+    reply({ ok: true, guestbook, birthdayName, gifts: giftList() });
   });
 
   socket.on('admin:setName', async (d, ack) => {
@@ -143,6 +177,51 @@ io.on('connection', (socket) => {
     }
     io.emit('guestbook:deleted', id);
     console.log(`[guestbook] 관리자 삭제: ${id}`);
+    reply({ ok: true });
+  });
+
+  socket.on('gift:delete', async (d, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!isAdmin) return reply({ ok: false, error: '관리자만 삭제할 수 있어요.' });
+    const id = String((d && d.id) || '');
+    try {
+      await store.removeGift(id);
+    } catch (err) {
+      console.error('[gift] 삭제 실패:', err.message);
+      return reply({ ok: false, error: '저장소에서 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.' });
+    }
+    gifts.delete(id);
+    io.emit('gift:removed', id);
+    console.log(`[gift] 관리자 삭제: ${id}`);
+    reply({ ok: true });
+  });
+
+  socket.on('gift:drop', async (d, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!player) return reply({ ok: false, error: '먼저 파티에 참가해 주세요.' });
+    const now = Date.now();
+    if (now - last.gift < 15000) return reply({ ok: false, error: '선물은 15초에 한 번만 놓을 수 있어요.' });
+    const buf = d && d.image;
+    if (!Buffer.isBuffer(buf) || buf.length < 100) return reply({ ok: false, error: '사진을 읽지 못했어요.' });
+    if (buf.length > MAX_GIFT_BYTES) return reply({ ok: false, error: '사진이 너무 커요.' });
+    // 브라우저에서 JPEG로 다시 만들어 보내므로 JPEG만 받음
+    if (buf[0] !== 0xff || buf[1] !== 0xd8 || buf[2] !== 0xff) return reply({ ok: false, error: '지원하지 않는 사진 형식이에요.' });
+    if (gifts.size >= MAX_GIFTS) return reply({ ok: false, error: `선물상자가 꽉 찼어요 (최대 ${MAX_GIFTS}개).` });
+    const spot = giftSpot(player.x, player.y);
+    if (!spot) return reply({ ok: false, error: '근처에 선물을 놓을 자리가 없어요. 조금 이동해 보세요.' });
+    last.gift = now;
+
+    const [c, r] = GIFT_COLORS[crypto.randomInt(GIFT_COLORS.length)];
+    const meta = { id: crypto.randomUUID(), name: player.name, hue: player.hue, x: spot.x, y: spot.y, c, r, ts: now };
+    try {
+      await store.addGift({ ...meta, img: buf.toString('base64') });
+    } catch (err) {
+      console.error('[gift] 저장 실패:', err.message);
+      return reply({ ok: false, error: '선물을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.' });
+    }
+    gifts.set(meta.id, { meta, buf });
+    io.emit('gift:new', { ...meta, by: socket.id });
+    console.log(`[gift] ${player.name}님이 선물 놓음 (${Math.round(buf.length / 1024)}KB)`);
     reply({ ok: true });
   });
 
@@ -239,6 +318,16 @@ io.on('connection', (socket) => {
     console.log(`[guestbook] ${store.name}에서 ${guestbook.length}개 불러옴`);
   } catch (err) {
     console.error('[guestbook] 불러오기 실패:', err.message);
+  }
+  try {
+    for (const g of await store.loadGifts()) {
+      if (!g || !g.id || !g.img) continue;
+      const { img, ...meta } = g;
+      gifts.set(meta.id, { meta, buf: Buffer.from(img, 'base64') });
+    }
+    console.log(`[gift] 선물 ${gifts.size}개 불러옴`);
+  } catch (err) {
+    console.error('[gift] 불러오기 실패:', err.message);
   }
   try {
     const saved = cleanText(await store.getSetting('birthdayName'), 20);

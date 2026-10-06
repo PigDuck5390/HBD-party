@@ -69,6 +69,27 @@
     .settings .hint { margin: 6px 0 0; font-size: 12px; opacity: 0.55; }
     .section-title { margin: 0 0 10px; font-size: 18px; font-weight: normal; }
     .section-title small { font-size: 14px; opacity: 0.55; }
+    #giftList {
+      list-style: none;
+      margin: 0 0 22px;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .gift-item {
+      background: #fff;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(80, 30, 80, 0.08);
+      border-top: 5px solid var(--c);
+    }
+    .gift-item a { display: block; }
+    .gift-item img { display: block; width: 100%; height: 120px; object-fit: cover; background: #fff1f6; }
+    .gift-item .meta { padding: 6px 8px 8px; font-size: 13px; display: flex; align-items: center; gap: 4px; }
+    .gift-item .meta span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .gift-item .gb-del { margin-left: 0; padding: 3px 8px; }
+    #giftList .gb-empty { grid-column: 1 / -1; }
     #list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
     .gb-del {
       border: none;
@@ -113,6 +134,8 @@
         </div>
         <p class="hint">저장하면 케이크·제목에 바로 반영되고, 접속 중인 모든 화면에도 즉시 바뀌어요.</p>
       </form>
+      <h2 class="section-title">🎁 선물 사진 <small id="giftTotal"></small></h2>
+      <ul id="giftList"></ul>
       <h2 class="section-title">📜 방명록 <small id="total"></small></h2>
       <ul id="list"></ul>
     </section>
@@ -127,6 +150,7 @@
       const socket = io();
       let adminKey = null; // 이 페이지가 열려 있는 동안만 메모리에 보관
       let guestbook = [];
+      let gifts = [];
 
       function toast(text, ms = 2200) {
         const el = document.createElement('div');
@@ -178,6 +202,45 @@
         $('total').textContent = `${guestbook.length}개`;
       }
 
+      function renderGifts() {
+        const list = $('giftList');
+        list.textContent = '';
+        if (!gifts.length) {
+          const li = document.createElement('li');
+          li.className = 'gb-empty';
+          li.textContent = '아직 놓인 선물이 없어요.';
+          list.appendChild(li);
+        }
+        for (const g of gifts) {
+          const li = document.createElement('li');
+          li.className = 'gift-item';
+          li.dataset.id = g.id;
+          li.style.setProperty('--c', g.c);
+          const a = document.createElement('a');
+          a.href = `/gift/${g.id}.jpg`;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          const img = document.createElement('img');
+          img.loading = 'lazy';
+          img.alt = `${g.name}님의 선물`;
+          img.src = a.href;
+          a.appendChild(img);
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          const who = document.createElement('span');
+          who.textContent = `${g.name} · ${fmtTime(g.ts).slice(5)}`;
+          const del = document.createElement('button');
+          del.type = 'button';
+          del.className = 'gb-del';
+          del.textContent = '🗑';
+          del.title = '선물 삭제';
+          meta.append(who, del);
+          li.append(a, meta);
+          list.appendChild(li);
+        }
+        $('giftTotal').textContent = `${gifts.length}개`;
+      }
+
       function login(key, quiet) {
         $('loginBtn').disabled = true;
         socket.timeout(8000).emit('admin:login', { key }, (err, res) => {
@@ -192,6 +255,8 @@
           }
           adminKey = key;
           guestbook = res.guestbook || [];
+          gifts = res.gifts || [];
+          renderGifts();
           if (res.birthdayName) $('bdNameInput').value = res.birthdayName;
           $('keyInput').value = '';
           $('loginError').textContent = '';
@@ -230,6 +295,23 @@
         });
       });
 
+      $('giftList').addEventListener('click', (e) => {
+        const btn = e.target.closest('.gb-del');
+        if (!btn || !adminKey) return;
+        const li = btn.closest('.gift-item');
+        const g = gifts.find((x) => x.id === li.dataset.id);
+        if (!window.confirm(`이 선물을 삭제할까요?
+
+${g ? g.name + '님의 선물' : ''}`)) return;
+        btn.disabled = true;
+        socket.timeout(8000).emit('gift:delete', { id: li.dataset.id }, (err, res) => {
+          btn.disabled = false;
+          if (err) return toast('삭제에 실패했어요. 다시 시도해 주세요.');
+          if (!res || !res.ok) return toast((res && res.error) || '삭제에 실패했어요.');
+          toast('선물을 삭제했어요');
+        });
+      });
+
       $('list').addEventListener('click', (e) => {
         const btn = e.target.closest('.gb-del');
         if (!btn || !adminKey) return;
@@ -263,6 +345,17 @@
       });
       socket.on('config', (d) => {
         if (adminKey && d && d.birthdayName && document.activeElement !== $('bdNameInput')) $('bdNameInput').value = d.birthdayName;
+      });
+      socket.on('gift:new', (g) => {
+        if (!adminKey) return;
+        const { by, ...meta } = g;
+        gifts.push(meta);
+        renderGifts();
+      });
+      socket.on('gift:removed', (id) => {
+        if (!adminKey) return;
+        gifts = gifts.filter((g) => g.id !== id);
+        renderGifts();
       });
       socket.on('guestbook:all', (list) => {
         if (!adminKey) return;
