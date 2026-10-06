@@ -8,7 +8,7 @@ services:
     healthCheckPath: /healthz
     envVars:
       - key: BIRTHDAY_NAME
-        value: 김찬
+        value: 주인공
       - key: ADMIN_KEY
         sync: false
       - key: UPSTASH_REDIS_REST_URL
