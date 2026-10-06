@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: hbd-party
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: BIRTHDAY_NAME
+        value: 김찬
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false

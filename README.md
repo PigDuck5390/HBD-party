@@ -1,0 +1,63 @@
+# 🎂 생일 파티 사이트
+
+여러 사람이 동시에 들어와 캐릭터로 돌아다니며 채팅하고, 폭죽을 터뜨리고, 방명록을 남기는 실시간 생일 파티 사이트입니다.
+
+- 이름을 입력하고 참가하면 **랜덤 색 캐릭터**가 생성됩니다 (🎲로 색 바꾸기 가능)
+- **이동**: 왼쪽 아래 방향키(모바일 터치/마우스) 또는 키보드 방향키·WASD
+- **💬 채팅**: 내 캐릭터 머리 위에 말풍선으로 표시 (PC는 Enter로도 열림)
+- **🎆 폭죽**: 케이크 양옆 폭죽 근처(점선 원 안)에 가면 버튼이 활성화 → 누르면 모두의 화면에서 폭죽이 터짐 (PC는 Space/F)
+- **📜 방명록**: 생일 축하 메시지를 남기고 모두가 실시간으로 확인
+
+## 로컬 실행
+
+Node.js 18 이상이 필요합니다.
+
+```bash
+npm install
+npm start
+```
+
+브라우저에서 http://localhost:3000 접속. 여러 탭을 열면 멀티플레이를 확인할 수 있습니다.
+
+## 설정 (환경 변수)
+
+| 이름 | 설명 |
+| --- | --- |
+| `BIRTHDAY_NAME` | 생일 주인공 이름 (케이크와 제목에 표시). 기본값 `주인공` |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | 방명록 영구 저장용 (선택, 아래 참고) |
+| `MAX_PLAYERS` | 동시 접속 최대 인원. 기본값 50 |
+
+## 무료 배포 (Render)
+
+1. 이 폴더를 GitHub 저장소에 올립니다.
+2. https://render.com 가입 → **New + → Blueprint** → 저장소 선택  
+   (`render.yaml`이 있어서 설정이 자동으로 채워집니다. 직접 만들려면 **New + → Web Service**, Build `npm install`, Start `npm start`, 플랜 Free)
+3. 환경 변수 `BIRTHDAY_NAME`에 주인공 이름을 넣고 배포합니다.
+4. 발급된 `https://hbd-party-xxxx.onrender.com` 주소를 친구들에게 공유하면 끝!
+
+> Render 무료 플랜은 15분 동안 접속이 없으면 잠들고, 다음 접속 때 깨어나는 데 30초~1분 정도 걸립니다.
+> 파티 시작 전에 미리 한 번 접속해 두세요.
+
+### 방명록을 영구 보관하려면 (권장)
+
+Render 무료 플랜은 서버가 잠들거나 재배포될 때 파일이 초기화되어 **방명록이 사라질 수 있습니다.**
+무료 Upstash Redis를 연결하면 안전하게 보관됩니다.
+
+1. https://upstash.com 가입 → **Create Database** (Redis, 무료)
+2. 데이터베이스 화면의 **REST API** 섹션에서 `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` 복사
+3. Render 서비스의 **Environment**에 두 값을 추가하고 저장 (자동 재배포)
+
+서버 로그에 `[guestbook] Upstash Redis에서 N개 불러옴`이 나오면 연결된 것입니다.
+
+## 파일 구조
+
+```
+server.js          실시간 서버 (Express + Socket.IO)
+storage.js         방명록 저장 (파일 또는 Upstash Redis)
+public/
+  index.html       화면 구성 (참가 화면, HUD, 방명록)
+  style.css        스타일
+  game.js          맵·캐릭터·폭죽 그리기, 이동, 채팅, 방명록
+  world.js         맵 배치·충돌 (서버와 공용)
+render.yaml        Render 배포 설정
+```
