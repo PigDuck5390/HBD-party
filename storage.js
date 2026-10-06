@@ -40,10 +40,20 @@ function upstashStore(url, token, limit) {
         if (parsed && parsed.id === id) await cmd(['LREM', KEY, '0', row]);
       }
     },
+    async getSetting(name) {
+      return cmd(['GET', `hbd:setting:${name}`]);
+    },
+    async setSetting(name, value) {
+      await cmd(['SET', `hbd:setting:${name}`, String(value)]);
+    },
   };
 }
 
 function fileStore(file) {
+  const settingsFile = path.join(path.dirname(file), 'settings.json');
+  const readSettings = () => {
+    try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')) || {}; } catch { return {}; }
+  };
   return {
     name: `파일(${path.relative(process.cwd(), file)})`,
     async load() {
@@ -61,6 +71,16 @@ function fileStore(file) {
     async remove(_id, all) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify(all));
+    },
+    async getSetting(name) {
+      const v = readSettings()[name];
+      return v == null ? null : String(v);
+    },
+    async setSetting(name, value) {
+      const all = readSettings();
+      all[name] = String(value);
+      fs.mkdirSync(path.dirname(settingsFile), { recursive: true });
+      fs.writeFileSync(settingsFile, JSON.stringify(all));
     },
   };
 }

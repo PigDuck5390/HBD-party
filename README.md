@@ -23,7 +23,7 @@ npm start
 
 | 이름 | 설명 |
 | --- | --- |
-| `BIRTHDAY_NAME` | 생일 주인공 이름 (케이크와 제목에 표시). 기본값 `주인공` |
+| `BIRTHDAY_NAME` | 생일 주인공 이름의 기본값. `/admin`에서 이름을 바꾸면 그 값이 우선 |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | 방명록 영구 저장용 (선택, 아래 참고) |
 | `ADMIN_KEY` | 관리자 비밀번호. `/admin` 페이지에서 방명록 글을 지울 때 사용 |
 | `MAX_PLAYERS` | 동시 접속 최대 인원. 기본값 50 |
@@ -50,12 +50,13 @@ Render 무료 플랜은 서버가 잠들거나 재배포될 때 파일이 초기
 
 서버 로그에 `[guestbook] Upstash Redis에서 N개 불러옴`이 나오면 연결된 것입니다.
 
-## 방명록 글 삭제 (관리자)
+## 관리자 페이지 (/admin)
 
 1. Render 서비스의 **Environment**에 `ADMIN_KEY`(관리자 비밀번호)를 추가합니다.
 2. 사이트 주소 뒤에 `/admin`을 붙여 접속합니다. 예: `https://hbd-party-xxxx.onrender.com/admin`
-3. 비밀번호를 입력하면 방명록 목록이 나오고, 글마다 있는 🗑 삭제 버튼으로 지울 수 있습니다.
-   지운 글은 저장소와 파티에 접속한 모든 사람 화면에서 바로 사라집니다.
+3. 비밀번호를 입력하면 관리 화면이 나옵니다.
+   - **🎂 주인공 이름**: 바꾸고 저장하면 케이크·제목에 바로 반영되고 저장소에 보관됩니다 (재시작해도 유지).
+   - **📜 방명록**: 글마다 있는 🗑 삭제 버튼으로 지우면 저장소와 모든 사람 화면에서 바로 사라집니다.
 
 일반 파티 화면에는 관리자 버튼이 보이지 않습니다. 비밀번호를 5번 틀리면 1분 동안 잠깁니다.
 관리자 로그인 시 저장소(Upstash)를 다시 읽어 오므로, Upstash 화면에서 직접 고친 내용도 이때 반영됩니다.
@@ -67,7 +68,7 @@ server.js          실시간 서버 (Express + Socket.IO)
 storage.js         방명록 저장 (파일 또는 Upstash Redis)
 public/
   index.html       화면 구성 (참가 화면, HUD, 방명록)
-  admin.html       방명록 관리 페이지 (/admin)
+  admin.html       관리자 페이지 (/admin): 주인공 이름, 방명록 삭제
   style.css        스타일
   game.js          맵·캐릭터·폭죽 그리기, 이동, 채팅, 방명록
   world.js         맵 배치·충돌 (서버와 공용)

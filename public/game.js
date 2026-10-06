@@ -1406,6 +1406,9 @@
       }
     }, 250);
   });
+  socket.on('config', (d) => {
+    if (d && d.birthdayName) setBirthdayName(d.birthdayName);
+  });
   socket.on('guestbook:all', (list) => {
     guestbook = Array.isArray(list) ? list : [];
     renderGuestbook();

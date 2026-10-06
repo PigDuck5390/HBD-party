@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <title>방명록 관리</title>
+  <title>파티 관리</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📜</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -47,6 +47,28 @@
     .bar h1 small { font-size: 15px; opacity: 0.55; }
     .bar .btns { display: flex; gap: 6px; }
     .bar a.pill { text-decoration: none; color: inherit; }
+    .settings {
+      background: #fff;
+      border-radius: 18px;
+      padding: 14px 16px;
+      margin-bottom: 18px;
+      box-shadow: 0 2px 8px rgba(80, 30, 80, 0.08);
+    }
+    .settings label { display: block; font-size: 15px; margin-bottom: 8px; }
+    .settings .row { display: flex; gap: 8px; }
+    #bdNameInput {
+      flex: 1;
+      min-width: 0;
+      border: 2px solid #f3dbe6;
+      border-radius: 12px;
+      padding: 8px 12px;
+      font-size: 16px;
+      outline: none;
+    }
+    #bdNameInput:focus { border-color: var(--pink); }
+    .settings .hint { margin: 6px 0 0; font-size: 12px; opacity: 0.55; }
+    .section-title { margin: 0 0 10px; font-size: 18px; font-weight: normal; }
+    .section-title small { font-size: 14px; opacity: 0.55; }
     #list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
     .gb-del {
       border: none;
@@ -67,7 +89,7 @@
     <!-- 로그인 -->
     <form id="loginForm" class="card login" autocomplete="off">
       <div class="confetti-top">🔒</div>
-      <h1>방명록 관리자</h1>
+      <h1>파티 관리자</h1>
       <p>관리자 비밀번호를 입력해 주세요.</p>
       <input id="keyInput" type="password" placeholder="비밀번호" autocomplete="current-password" autofocus>
       <button id="loginBtn" class="primary" type="submit">들어가기</button>
@@ -77,12 +99,21 @@
     <!-- 관리 화면 -->
     <section id="panel" hidden>
       <div class="bar">
-        <h1>📜 방명록 관리 <small id="total"></small></h1>
+        <h1>🛠 파티 관리</h1>
         <div class="btns">
           <a class="pill" href="/">🎂 파티로</a>
           <button type="button" id="logoutBtn" class="pill">로그아웃</button>
         </div>
       </div>
+      <form id="nameForm" class="settings" autocomplete="off">
+        <label for="bdNameInput">🎂 주인공 이름</label>
+        <div class="row">
+          <input id="bdNameInput" maxlength="20" placeholder="주인공 이름 (최대 20자)">
+          <button id="nameBtn" type="submit" class="primary small">저장</button>
+        </div>
+        <p class="hint">저장하면 케이크·제목에 바로 반영되고, 접속 중인 모든 화면에도 즉시 바뀌어요.</p>
+      </form>
+      <h2 class="section-title">📜 방명록 <small id="total"></small></h2>
       <ul id="list"></ul>
     </section>
   </div>
@@ -161,6 +192,7 @@
           }
           adminKey = key;
           guestbook = res.guestbook || [];
+          if (res.birthdayName) $('bdNameInput').value = res.birthdayName;
           $('keyInput').value = '';
           $('loginError').textContent = '';
           $('loginForm').hidden = true;
@@ -182,6 +214,20 @@
         $('panel').hidden = true;
         $('loginForm').hidden = false;
         $('keyInput').focus();
+      });
+
+      $('nameForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = $('bdNameInput').value.trim();
+        if (!name) { $('bdNameInput').focus(); return; }
+        $('nameBtn').disabled = true;
+        socket.timeout(8000).emit('admin:setName', { name }, (err, res) => {
+          $('nameBtn').disabled = false;
+          if (err) return toast('저장에 실패했어요. 다시 시도해 주세요.');
+          if (!res || !res.ok) return toast((res && res.error) || '저장에 실패했어요.');
+          $('bdNameInput').value = res.birthdayName;
+          toast(`주인공 이름을 "${res.birthdayName}"(으)로 바꿨어요 🎉`);
+        });
       });
 
       $('list').addEventListener('click', (e) => {
@@ -214,6 +260,9 @@
         if (!li) return render();
         li.classList.add('removing');
         setTimeout(render, 250);
+      });
+      socket.on('config', (d) => {
+        if (adminKey && d && d.birthdayName && document.activeElement !== $('bdNameInput')) $('bdNameInput').value = d.birthdayName;
       });
       socket.on('guestbook:all', (list) => {
         if (!adminKey) return;

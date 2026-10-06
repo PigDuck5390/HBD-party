@@ -36,7 +36,9 @@ const num = (v, min, max, fallback) => {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 };
 
-const BIRTHDAY_NAME = cleanText(process.env.BIRTHDAY_NAME, 20) || '주인공';
+// 기본값은 환경 변수, 관리자 페이지에서 바꾸면 저장소에 저장된 값이 우선
+const DEFAULT_BIRTHDAY_NAME = cleanText(process.env.BIRTHDAY_NAME, 20) || '주인공';
+let birthdayName = DEFAULT_BIRTHDAY_NAME;
 const ADMIN_KEY = String(process.env.ADMIN_KEY || '');
 
 // 관리자 비밀번호 비교 (길이와 상관없이 일정한 시간)
@@ -75,7 +77,7 @@ function spawnPoint() {
 }
 
 io.on('connection', (socket) => {
-  socket.emit('hello', { birthdayName: BIRTHDAY_NAME, online: players.size });
+  socket.emit('hello', { birthdayName, online: players.size });
 
   let player = null;
   let isAdmin = false;
@@ -105,7 +107,24 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('[guestbook] 다시 불러오기 실패:', err.message);
     }
-    reply({ ok: true, guestbook });
+    reply({ ok: true, guestbook, birthdayName });
+  });
+
+  socket.on('admin:setName', async (d, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!isAdmin) return reply({ ok: false, error: '관리자만 바꿀 수 있어요.' });
+    const name = cleanText(d && d.name, 20);
+    if (!name) return reply({ ok: false, error: '이름을 입력해 주세요.' });
+    try {
+      await store.setSetting('birthdayName', name);
+    } catch (err) {
+      console.error('[settings] 저장 실패:', err.message);
+      return reply({ ok: false, error: '저장하지 못했어요. 잠시 후 다시 시도해 주세요.' });
+    }
+    birthdayName = name;
+    io.emit('config', { birthdayName });
+    console.log(`[settings] 주인공 이름 변경: ${name}`);
+    reply({ ok: true, birthdayName });
   });
 
   socket.on('admin:logout', () => { isAdmin = false; });
@@ -144,7 +163,7 @@ io.on('connection', (socket) => {
 
     socket.emit('welcome', {
       id: socket.id,
-      birthdayName: BIRTHDAY_NAME,
+      birthdayName,
       players: [...players.values()].map(publicPlayer),
       guestbook,
     });
@@ -221,5 +240,11 @@ io.on('connection', (socket) => {
   } catch (err) {
     console.error('[guestbook] 불러오기 실패:', err.message);
   }
-  server.listen(PORT, () => console.log(`🎂 생일 파티 서버: http://localhost:${PORT}  (주인공: ${BIRTHDAY_NAME})`));
+  try {
+    const saved = cleanText(await store.getSetting('birthdayName'), 20);
+    if (saved) birthdayName = saved;
+  } catch (err) {
+    console.error('[settings] 불러오기 실패:', err.message);
+  }
+  server.listen(PORT, () => console.log(`🎂 생일 파티 서버: http://localhost:${PORT}  (주인공: ${birthdayName})`));
 })();
