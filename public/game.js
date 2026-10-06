@@ -1231,7 +1231,13 @@
     name.textContent = e.name;
     const time = document.createElement('time');
     time.textContent = fmtTime(e.ts);
-    head.append(dot, name, time);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'gb-del';
+    del.textContent = '🗑';
+    del.title = '삭제';
+    head.append(dot, name, time, del);
+    li.dataset.id = e.id;
     const p = document.createElement('p');
     p.textContent = e.text;
     li.append(head, p);
@@ -1283,6 +1289,63 @@
     });
   });
 
+  // 관리자 (비밀번호는 저장하지 않고 이 페이지가 열려 있는 동안만 메모리에 보관)
+  const adminBtn = $('adminBtn');
+  const adminForm = $('adminForm');
+  const adminKeyInput = $('adminKey');
+  let adminKey = null;
+  function setAdmin(on) {
+    gbModal.classList.toggle('admin', on);
+    adminBtn.classList.toggle('on', on);
+    adminBtn.textContent = on ? '🔓 관리자 모드' : '🔒 관리자';
+  }
+  function adminLogin(key, quiet) {
+    socket.timeout(8000).emit('admin:login', { key }, (err, res) => {
+      if (err || !res || !res.ok) {
+        if (!quiet) toast((res && res.error) || '로그인에 실패했어요.');
+        adminKey = null;
+        setAdmin(false);
+        return;
+      }
+      adminKey = key;
+      setAdmin(true);
+      adminForm.hidden = true;
+      adminKeyInput.value = '';
+      if (!quiet) toast('관리자 모드: 🗑 버튼으로 글을 지울 수 있어요');
+    });
+  }
+  adminBtn.addEventListener('click', () => {
+    if (adminKey) {
+      adminKey = null;
+      setAdmin(false);
+      socket.emit('admin:logout');
+      toast('관리자 모드를 껐어요', 1500);
+      return;
+    }
+    adminForm.hidden = !adminForm.hidden;
+    if (!adminForm.hidden) adminKeyInput.focus();
+  });
+  adminForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const key = adminKeyInput.value;
+    if (key) adminLogin(key, false);
+  });
+  gbList.addEventListener('click', (e) => {
+    const btn = e.target.closest('.gb-del');
+    if (!btn || !adminKey) return;
+    const li = btn.closest('.gb-item');
+    const entry = guestbook.find((g) => g.id === li.dataset.id);
+    const preview = entry ? `${entry.name}: ${entry.text.slice(0, 40)}` : '';
+    if (!window.confirm(`이 글을 삭제할까요?\n\n${preview}`)) return;
+    btn.disabled = true;
+    socket.timeout(8000).emit('guestbook:delete', { id: li.dataset.id }, (err, res) => {
+      btn.disabled = false;
+      if (err) return toast('삭제에 실패했어요. 다시 시도해 주세요.');
+      if (!res || !res.ok) return toast((res && res.error) || '삭제에 실패했어요.');
+      toast('삭제했어요', 1500);
+    });
+  });
+
   // 참가
   const joinScreen = $('join');
   const joinBtn = $('joinBtn');
@@ -1315,9 +1378,11 @@
     if (joined && me) {
       socket.emit('join', { name: me.name, hue: me.hue, x: me.x, y: me.y });
     }
+    if (adminKey) adminLogin(adminKey, true); // 재연결되면 관리자 모드 유지
   });
   socket.on('hello', (d) => {
     setBirthdayName(d.birthdayName);
+    adminBtn.hidden = !d.adminEnabled;
     if (!joined) {
       joinBtn.disabled = false;
       joinStatus.textContent = d.online ? `지금 ${d.online}명이 파티 중이에요! 🎈` : '첫 번째 손님이 되어주세요! 🎈';
@@ -1390,6 +1455,24 @@
       badge.hidden = false;
       if (e.name !== (me && me.name)) toast(`📜 ${e.name}님이 방명록을 남겼어요`, 2200);
     }
+  });
+  socket.on('guestbook:deleted', (id) => {
+    guestbook = guestbook.filter((e) => e.id !== id);
+    const li = [...gbList.children].find((el) => el.dataset.id === id);
+    if (!li) return;
+    li.classList.add('removing');
+    setTimeout(() => {
+      if (guestbook.length) {
+        li.remove();
+        $('gbTotal').textContent = `${guestbook.length}개`;
+      } else {
+        renderGuestbook();
+      }
+    }, 250);
+  });
+  socket.on('guestbook:all', (list) => {
+    guestbook = Array.isArray(list) ? list : [];
+    renderGuestbook();
   });
   socket.on('disconnect', () => {
     if (joined) toast('연결이 끊겼어요. 다시 연결하는 중\u2026', 3000);

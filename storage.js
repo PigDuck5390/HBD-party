@@ -31,6 +31,15 @@ function upstashStore(url, token, limit) {
       await cmd(['LPUSH', KEY, JSON.stringify(entry)]);
       await cmd(['LTRIM', KEY, '0', String(limit - 1)]);
     },
+    // 저장된 원본 문자열을 id로 찾아서 지움
+    async remove(id) {
+      const rows = (await cmd(['LRANGE', KEY, '0', '-1'])) || [];
+      for (const row of rows) {
+        let parsed = null;
+        try { parsed = JSON.parse(row); } catch { /* 무시 */ }
+        if (parsed && parsed.id === id) await cmd(['LREM', KEY, '0', row]);
+      }
+    },
   };
 }
 
@@ -46,6 +55,10 @@ function fileStore(file) {
       }
     },
     async add(_entry, all) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify(all));
+    },
+    async remove(_id, all) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify(all));
     },

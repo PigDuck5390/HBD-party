@@ -37,6 +37,18 @@ const num = (v, min, max, fallback) => {
 };
 
 const BIRTHDAY_NAME = cleanText(process.env.BIRTHDAY_NAME, 20) || '주인공';
+const ADMIN_KEY = String(process.env.ADMIN_KEY || '');
+
+// 관리자 비밀번호 비교 (길이와 상관없이 일정한 시간)
+const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest();
+const checkAdminKey = (key) => ADMIN_KEY !== '' && crypto.timingSafeEqual(sha256(key), sha256(ADMIN_KEY));
+
+// IP별 비밀번호 실패 횟수 제한: 5번 틀리면 1분 잠금
+const adminFails = new Map();
+function clientIp(socket) {
+  const fwd = socket.handshake.headers['x-forwarded-for'];
+  return (typeof fwd === 'string' && fwd.split(',')[0].trim()) || socket.handshake.address;
+}
 
 const app = express();
 app.disable('x-powered-by');
@@ -62,10 +74,58 @@ function spawnPoint() {
 }
 
 io.on('connection', (socket) => {
-  socket.emit('hello', { birthdayName: BIRTHDAY_NAME, online: players.size });
+  socket.emit('hello', { birthdayName: BIRTHDAY_NAME, online: players.size, adminEnabled: ADMIN_KEY !== '' });
 
   let player = null;
+  let isAdmin = false;
   const last = { chat: 0, firework: 0, guestbook: 0 };
+
+  socket.on('admin:login', async (d, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!ADMIN_KEY) return reply({ ok: false, error: '관리자 기능이 꺼져 있어요. (ADMIN_KEY 미설정)' });
+    const ip = clientIp(socket);
+    const now = Date.now();
+    const rec = adminFails.get(ip) || { count: 0, until: 0 };
+    if (rec.until > now) {
+      return reply({ ok: false, error: `너무 많이 틀렸어요. ${Math.ceil((rec.until - now) / 1000)}초 후에 다시 시도해 주세요.` });
+    }
+    if (!checkAdminKey(String((d && d.key) || ''))) {
+      rec.count += 1;
+      if (rec.count >= 5) { rec.count = 0; rec.until = now + 60_000; }
+      adminFails.set(ip, rec);
+      return reply({ ok: false, error: '비밀번호가 틀렸어요.' });
+    }
+    adminFails.delete(ip);
+    isAdmin = true;
+    reply({ ok: true });
+
+    // Upstash 화면에서 직접 고친 내용이 있을 수 있으니 저장소에서 다시 읽어 모두에게 동기화
+    try {
+      guestbook = (await store.load()).slice(0, GUESTBOOK_LIMIT);
+      io.emit('guestbook:all', guestbook);
+    } catch (err) {
+      console.error('[guestbook] 다시 불러오기 실패:', err.message);
+    }
+  });
+
+  socket.on('admin:logout', () => { isAdmin = false; });
+
+  socket.on('guestbook:delete', async (d, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!isAdmin) return reply({ ok: false, error: '관리자만 삭제할 수 있어요.' });
+    const id = String((d && d.id) || '');
+    const idx = guestbook.findIndex((e) => e.id === id);
+    if (idx !== -1) guestbook.splice(idx, 1);
+    try {
+      await store.remove(id, guestbook);
+    } catch (err) {
+      console.error('[guestbook] 삭제 실패:', err.message);
+      return reply({ ok: false, error: '저장소에서 삭제하지 못했어요. 잠시 후 다시 시도해 주세요.' });
+    }
+    io.emit('guestbook:deleted', id);
+    console.log(`[guestbook] 관리자 삭제: ${id}`);
+    reply({ ok: true });
+  });
 
   socket.on('join', (data) => {
     if (player) return;
