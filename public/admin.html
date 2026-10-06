@@ -67,6 +67,31 @@
     }
     #bdNameInput:focus { border-color: var(--pink); }
     .settings .hint { margin: 6px 0 0; font-size: 12px; opacity: 0.55; }
+    #wordInput {
+      flex: 1;
+      min-width: 0;
+      border: 2px solid #f3dbe6;
+      border-radius: 12px;
+      padding: 8px 12px;
+      font-size: 16px;
+      outline: none;
+    }
+    #wordInput:focus { border-color: var(--pink); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; max-height: 180px; overflow-y: auto; }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      padding: 3px 4px 3px 10px;
+      border-radius: 999px;
+      background: #fff1f6;
+      border: 1px solid #f3dbe6;
+      font-family: system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+      font-size: 13px;
+    }
+    .chip button { border: none; background: transparent; padding: 0 6px; font-size: 13px; opacity: 0.5; }
+    .chip button:hover { opacity: 1; color: #e0315f; }
+    .chips .none { font-size: 13px; opacity: 0.55; }
     .section-title { margin: 0 0 10px; font-size: 18px; font-weight: normal; }
     .section-title small { font-size: 14px; opacity: 0.55; }
     #giftList {
@@ -134,6 +159,15 @@
         </div>
         <p class="hint">저장하면 케이크·제목에 바로 반영되고, 접속 중인 모든 화면에도 즉시 바뀌어요.</p>
       </form>
+      <form id="wordForm" class="settings" autocomplete="off">
+        <label for="wordInput">🚫 금지어 <small id="wordTotal" style="opacity:.55"></small></label>
+        <div class="row">
+          <input id="wordInput" maxlength="200" placeholder="추가할 단어 (쉼표로 여러 개)">
+          <button id="wordBtn" type="submit" class="primary small">추가</button>
+        </div>
+        <p class="hint">이름에 들어 있으면 참가가 막히고, 채팅·방명록에서는 ***로 가려져요. 띄어쓰기·숫자·기호를 끼운 변형도 잡아요.</p>
+        <div id="chips" class="chips"></div>
+      </form>
       <h2 class="section-title">🎁 선물 사진 <small id="giftTotal"></small></h2>
       <ul id="giftList"></ul>
       <h2 class="section-title">📜 방명록 <small id="total"></small></h2>
@@ -151,6 +185,7 @@
       let adminKey = null; // 이 페이지가 열려 있는 동안만 메모리에 보관
       let guestbook = [];
       let gifts = [];
+      let bannedWords = [];
 
       function toast(text, ms = 2200) {
         const el = document.createElement('div');
@@ -241,6 +276,42 @@
         $('giftTotal').textContent = `${gifts.length}개`;
       }
 
+      function renderWords() {
+        const box = $('chips');
+        box.textContent = '';
+        if (!bannedWords.length) {
+          const p = document.createElement('span');
+          p.className = 'none';
+          p.textContent = '금지어가 없어요.';
+          box.appendChild(p);
+        }
+        for (const w of bannedWords) {
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.append(document.createTextNode(w));
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.textContent = '✕';
+          x.title = '삭제';
+          x.dataset.word = w;
+          chip.appendChild(x);
+          box.appendChild(chip);
+        }
+        $('wordTotal').textContent = `${bannedWords.length}개`;
+      }
+      function sendWords(action, words) {
+        $('wordBtn').disabled = true;
+        socket.timeout(8000).emit('admin:banned', { action, words }, (err, res) => {
+          $('wordBtn').disabled = false;
+          if (err) return toast('저장에 실패했어요. 다시 시도해 주세요.');
+          if (!res || !res.ok) return toast((res && res.error) || '저장에 실패했어요.');
+          bannedWords = res.bannedWords;
+          renderWords();
+          if (action === 'add') $('wordInput').value = '';
+          toast(action === 'add' ? '금지어를 추가했어요' : '금지어를 뺐어요', 1500);
+        });
+      }
+
       function login(key, quiet) {
         $('loginBtn').disabled = true;
         socket.timeout(8000).emit('admin:login', { key }, (err, res) => {
@@ -257,6 +328,8 @@
           guestbook = res.guestbook || [];
           gifts = res.gifts || [];
           renderGifts();
+          bannedWords = res.bannedWords || [];
+          renderWords();
           if (res.birthdayName) $('bdNameInput').value = res.birthdayName;
           $('keyInput').value = '';
           $('loginError').textContent = '';
@@ -293,6 +366,17 @@
           $('bdNameInput').value = res.birthdayName;
           toast(`주인공 이름을 "${res.birthdayName}"(으)로 바꿨어요 🎉`);
         });
+      });
+
+      $('wordForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const words = $('wordInput').value.split(/[,，\n]/).map((w) => w.trim()).filter(Boolean);
+        if (!words.length) { $('wordInput').focus(); return; }
+        sendWords('add', words);
+      });
+      $('chips').addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-word]');
+        if (btn && adminKey) sendWords('remove', [btn.dataset.word]);
       });
 
       $('giftList').addEventListener('click', (e) => {
@@ -345,6 +429,11 @@ ${g ? g.name + '님의 선물' : ''}`)) return;
       });
       socket.on('config', (d) => {
         if (adminKey && d && d.birthdayName && document.activeElement !== $('bdNameInput')) $('bdNameInput').value = d.birthdayName;
+      });
+      socket.on('admin:bannedWords', (words) => {
+        if (!adminKey) return;
+        bannedWords = Array.isArray(words) ? words : [];
+        renderWords();
       });
       socket.on('gift:new', (g) => {
         if (!adminKey) return;

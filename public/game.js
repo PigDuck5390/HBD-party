@@ -1609,6 +1609,14 @@
       joinStatus.textContent = d.online ? `지금 ${d.online}명이 파티 중이에요! 🎈` : '첫 번째 손님이 되어주세요! 🎈';
     }
   });
+  socket.on('joinRejected', (d) => {
+    joinBtn.disabled = false;
+    joinStatus.textContent = (d && d.error) || '참가할 수 없어요.';
+    nameInput.classList.remove('shake');
+    void nameInput.offsetWidth;
+    nameInput.classList.add('shake');
+    nameInput.focus();
+  });
   socket.on('full', (d) => {
     joinBtn.disabled = false;
     joinStatus.textContent = `파티장이 꽉 찼어요 (최대 ${d.max}명). 잠시 후 다시 시도해 주세요.`;

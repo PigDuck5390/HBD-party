@@ -6,6 +6,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const WORLD = require('./public/world.js');
 const { createGuestbookStore } = require('./storage');
+const { createFilter, normalizeWord } = require('./filter');
 
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS) || 50;
@@ -77,6 +78,7 @@ const server = http.createServer(app);
 const io = new Server(server, { maxHttpBufferSize: 1_200_000 });
 
 const players = new Map();
+const filter = createFilter(); // 저장된 금지어가 있으면 시작할 때 덮어씀
 const store = createGuestbookStore({ limit: GUESTBOOK_LIMIT });
 let guestbook = []; // 최신 글이 앞
 
@@ -134,6 +136,7 @@ io.on('connection', (socket) => {
     }
     adminFails.delete(ip);
     isAdmin = true;
+    socket.join('admins');
     // Upstash 화면에서 직접 고친 내용이 있을 수 있으니 저장소에서 다시 읽어 모두에게 동기화
     try {
       guestbook = (await store.load()).slice(0, GUESTBOOK_LIMIT);
@@ -141,7 +144,7 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('[guestbook] 다시 불러오기 실패:', err.message);
     }
-    reply({ ok: true, guestbook, birthdayName, gifts: giftList() });
+    reply({ ok: true, guestbook, birthdayName, gifts: giftList(), bannedWords: filter.words });
   });
 
   socket.on('admin:setName', async (d, ack) => {
@@ -161,7 +164,32 @@ io.on('connection', (socket) => {
     reply({ ok: true, birthdayName });
   });
 
-  socket.on('admin:logout', () => { isAdmin = false; });
+  socket.on('admin:logout', () => {
+    isAdmin = false;
+    socket.leave('admins');
+  });
+
+  // 금지어 추가/삭제: words는 문자열 배열(쉼표로 여러 개 입력 가능)
+  socket.on('admin:banned', async (d, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!isAdmin) return reply({ ok: false, error: '관리자만 바꿀 수 있어요.' });
+    const words = (Array.isArray(d && d.words) ? d.words : []).slice(0, 50).map((w) => normalizeWord(String(w).slice(0, 40)));
+    let next = filter.words;
+    if (d && d.action === 'add') next = next.concat(words.filter(Boolean));
+    else if (d && d.action === 'remove') next = next.filter((w) => !words.includes(w));
+    else return reply({ ok: false, error: '잘못된 요청이에요.' });
+    const before = filter.words;
+    filter.set(next);
+    try {
+      await store.setSetting('bannedWords', JSON.stringify(filter.words));
+    } catch (err) {
+      filter.set(before);
+      console.error('[filter] 저장 실패:', err.message);
+      return reply({ ok: false, error: '저장하지 못했어요. 잠시 후 다시 시도해 주세요.' });
+    }
+    io.to('admins').emit('admin:bannedWords', filter.words);
+    reply({ ok: true, bannedWords: filter.words });
+  });
 
   socket.on('guestbook:delete', async (d, ack) => {
     const reply = typeof ack === 'function' ? ack : () => {};
@@ -231,6 +259,7 @@ io.on('connection', (socket) => {
     if (players.size >= MAX_PLAYERS) return socket.emit('full', { max: MAX_PLAYERS });
 
     const name = cleanText(d.name, 12) || `손님${Math.floor(Math.random() * 900 + 100)}`;
+    if (filter.has(name)) return socket.emit('joinRejected', { error: '이름에 사용할 수 없는 단어가 들어 있어요.' });
     const hue = Math.round(num(d.hue, 0, 359, Math.random() * 360));
     let pos = spawnPoint();
     const x = num(d.x, 0, WORLD.w, NaN);
@@ -264,7 +293,7 @@ io.on('connection', (socket) => {
     if (!player) return;
     const now = Date.now();
     if (now - last.chat < 600) return;
-    const text = cleanText(d && d.text, 60);
+    const text = filter.mask(cleanText(d && d.text, 60));
     if (!text) return;
     last.chat = now;
     io.emit('chat', { id: player.id, name: player.name, hue: player.hue, text });
@@ -287,7 +316,7 @@ io.on('connection', (socket) => {
     if (!player) return reply({ ok: false, error: '먼저 파티에 참가해 주세요.' });
     const now = Date.now();
     if (now - last.guestbook < 8000) return reply({ ok: false, error: '조금만 기다렸다가 다시 남겨주세요.' });
-    const text = cleanMultiline(d && d.text, 300);
+    const text = filter.mask(cleanMultiline(d && d.text, 300));
     if (!text) return reply({ ok: false, error: '메시지를 입력해 주세요.' });
     last.guestbook = now;
 
@@ -328,6 +357,13 @@ io.on('connection', (socket) => {
     console.log(`[gift] 선물 ${gifts.size}개 불러옴`);
   } catch (err) {
     console.error('[gift] 불러오기 실패:', err.message);
+  }
+  try {
+    const saved = await store.getSetting('bannedWords');
+    if (saved) filter.set(JSON.parse(saved));
+    console.log(`[filter] 금지어 ${filter.words.length}개`);
+  } catch (err) {
+    console.error('[filter] 불러오기 실패:', err.message);
   }
   try {
     const saved = cleanText(await store.getSetting('birthdayName'), 20);
