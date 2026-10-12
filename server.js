@@ -338,6 +338,36 @@ io.on('connection', (socket) => {
     reply({ ok: true, ...partyConfig() });
   });
 
+  // 새 파티 시작: 방명록·선물 전부 삭제 (파티 설정·금지어는 유지)
+  // 실수 방지를 위해 로그인 상태여도 비밀번호를 한 번 더 확인 (틀리면 로그인 실패 횟수에 포함)
+  socket.on('admin:reset', async (d, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!isAdmin) return reply({ ok: false, error: '관리자만 초기화할 수 있어요.' });
+    const auth = verifyAdmin(clientIp(socket), d && d.key);
+    if (!auth.ok) return reply({ ok: false, error: auth.error });
+
+    const removed = { guestbook: guestbook.length, gifts: gifts.size };
+    try {
+      await store.replaceGuestbook([]);
+      for (const id of [...gifts.keys()]) {
+        await store.removeGift(id);
+        gifts.delete(id);
+      }
+    } catch (err) {
+      console.error('[reset] 실패:', err.message);
+      // 일부만 지워졌을 수 있으니 저장소 기준으로 다시 맞춤
+      try { guestbook = (await store.load()).slice(0, GUESTBOOK_LIMIT); } catch { /* 무시 */ }
+      io.emit('guestbook:all', guestbook);
+      io.emit('gifts:all', giftList());
+      return reply({ ok: false, error: `초기화 중 오류가 났어요: ${err.message}` });
+    }
+    guestbook = [];
+    io.emit('guestbook:all', guestbook);
+    io.emit('gifts:all', giftList());
+    console.log(`[reset] 새 파티 시작: 방명록 ${removed.guestbook}개, 선물 ${removed.gifts}개 삭제`);
+    reply({ ok: true, removed });
+  });
+
   socket.on('admin:logout', () => {
     isAdmin = false;
     socket.leave('admins');

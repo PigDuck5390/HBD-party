@@ -153,6 +153,36 @@
     .backup-btns { display: flex; flex-wrap: wrap; gap: 8px; }
     .backup-btns .pill { font-size: 14px; padding: 8px 14px; }
     .backup-btns .pill:disabled { opacity: 0.5; }
+    .danger {
+      border: none;
+      border-radius: 12px;
+      padding: 9px 16px;
+      font-size: 15px;
+      color: #fff;
+      background: #e0315f;
+      box-shadow: 0 3px 0 rgba(150, 20, 60, 0.35);
+    }
+    .danger:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(150, 20, 60, 0.35); }
+    .danger:disabled { opacity: 0.5; }
+    .settings.danger-zone { border: 2px solid #ffd0dc; }
+    .reset-sheet { width: min(420px, 100%); padding: 20px 20px 16px; gap: 0; overflow-y: auto; }
+    .reset-sheet h2 { margin: 0 0 10px; font-size: 21px; font-weight: normal; }
+    .reset-sheet p { margin: 0 0 8px; font-size: 14px; line-height: 1.55; }
+    .reset-sheet ul { margin: 0 0 10px; padding-left: 20px; font-size: 14px; line-height: 1.7; }
+    .reset-sheet .warn { color: #e0315f; }
+    .reset-sheet .keep { opacity: 0.7; }
+    .reset-sheet .reset-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .reset-sheet .reset-actions .pill { font-size: 14px; padding: 8px 14px; }
+    #resetKey {
+      width: 100%;
+      border: 2px solid #f3dbe6;
+      border-radius: 12px;
+      padding: 10px 12px;
+      font-size: 16px;
+      outline: none;
+    }
+    #resetKey:focus { border-color: #e0315f; }
+    #resetError { color: #e0315f; font-size: 13px; min-height: 1.2em; margin: 6px 0 0; }
   </style>
 </head>
 <body>
@@ -223,12 +253,48 @@
         </div>
         <p class="hint">전체 백업(.json)은 다른 서버에 그대로 복원할 수 있어요. 모아 받기(.zip)는 사진(JPG)과 방명록(TXT)을 추억용으로 보관할 때 좋아요.<br>복원하면 지금 데이터에 합쳐지고(같은 글·선물은 건너뜀), 파티 설정과 금지어는 백업 값으로 바뀌어요.</p>
       </div>
+      <div class="settings danger-zone">
+        <label>🧹 새 파티 시작 (초기화)</label>
+        <p class="hint" style="margin: 0 0 10px">방명록과 선물 사진을 모두 지우고 새 파티를 시작해요. 파티 설정과 금지어는 그대로 남아요. 지우기 전에 위에서 백업을 받아 두세요.</p>
+        <button type="button" id="resetBtn" class="danger">🧹 새 파티 시작하기</button>
+      </div>
       <h2 class="section-title">🎁 선물 사진 <small id="giftTotal"></small></h2>
       <ul id="giftList"></ul>
       <h2 class="section-title">📜 방명록 <small id="total"></small></h2>
       <ul id="list"></ul>
     </section>
   </div>
+  <!-- 초기화 확인 창: 1단계 확인 → 2단계 비밀번호 -->
+  <div id="resetModal" class="modal" hidden>
+    <div class="sheet reset-sheet" role="alertdialog" aria-labelledby="resetTitle">
+      <div id="resetStep1">
+        <h2 id="resetTitle">🧹 정말 초기화할까요?</h2>
+        <p class="warn">아래 데이터가 <b>모두 삭제</b>되고 되돌릴 수 없어요.</p>
+        <ul>
+          <li class="warn">📜 방명록 <b id="resetGbCount">0</b>개</li>
+          <li class="warn">🎁 선물 사진 <b id="resetGiftCount">0</b>개</li>
+          <li class="keep">🎉 파티 설정과 🚫 금지어는 그대로 남아요</li>
+        </ul>
+        <p>백업을 받아 두면 나중에 <b>⬆ 백업 복원하기</b>로 되살릴 수 있어요.</p>
+        <div class="reset-actions">
+          <button type="button" id="resetBackup" class="pill">⬇ 백업 먼저 받기</button>
+          <button type="button" class="pill" data-reset-cancel>취소</button>
+          <button type="button" id="resetNext" class="danger">확인</button>
+        </div>
+      </div>
+      <form id="resetStep2" hidden autocomplete="off">
+        <h2>🔒 비밀번호 확인</h2>
+        <p>초기화하려면 관리자 비밀번호를 한 번 더 입력해 주세요.</p>
+        <input id="resetKey" type="password" placeholder="관리자 비밀번호" autocomplete="current-password">
+        <p id="resetError"></p>
+        <div class="reset-actions">
+          <button type="button" class="pill" data-reset-cancel>취소</button>
+          <button type="submit" id="resetConfirm" class="danger">초기화</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="toasts"></div>
 
   <script src="/socket.io/socket.io.js"></script>
@@ -532,6 +598,55 @@
         } finally {
           btn.disabled = false;
         }
+      });
+
+      // 새 파티 시작(초기화): 1단계 확인 → 2단계 비밀번호
+      const resetModal = $('resetModal');
+      function openReset() {
+        if (!adminKey) return;
+        $('resetGbCount').textContent = guestbook.length;
+        $('resetGiftCount').textContent = gifts.length;
+        $('resetStep1').hidden = false;
+        $('resetStep2').hidden = true;
+        $('resetKey').value = '';
+        $('resetError').textContent = '';
+        resetModal.hidden = false;
+        $('resetNext').focus();
+      }
+      function closeReset() {
+        resetModal.hidden = true;
+        $('resetKey').value = '';
+      }
+      $('resetBtn').addEventListener('click', openReset);
+      resetModal.addEventListener('click', (e) => {
+        if (e.target === resetModal || e.target.closest('[data-reset-cancel]')) closeReset();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !resetModal.hidden) closeReset();
+      });
+      $('resetBackup').addEventListener('click', (e) => download('/admin/api/backup', 'hbd-backup.json', e.currentTarget));
+      $('resetNext').addEventListener('click', () => {
+        $('resetStep1').hidden = true;
+        $('resetStep2').hidden = false;
+        $('resetKey').focus();
+      });
+      $('resetStep2').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const key = $('resetKey').value;
+        if (!key) { $('resetKey').focus(); return; }
+        $('resetConfirm').disabled = true;
+        $('resetError').textContent = '';
+        socket.timeout(30000).emit('admin:reset', { key }, (err, res) => {
+          $('resetConfirm').disabled = false;
+          if (err) { $('resetError').textContent = '서버 응답이 없어요. 다시 시도해 주세요.'; return; }
+          if (!res || !res.ok) {
+            $('resetError').textContent = (res && res.error) || '초기화에 실패했어요.';
+            $('resetKey').select();
+            return;
+          }
+          closeReset();
+          toast(`새 파티를 시작했어요! 방명록 ${res.removed.guestbook}개, 선물 ${res.removed.gifts}개를 지웠어요 🧹`, 4000);
+        });
       });
 
       $('giftList').addEventListener('click', (e) => {
