@@ -153,6 +153,12 @@
     .backup-btns { display: flex; flex-wrap: wrap; gap: 8px; }
     .backup-btns .pill { font-size: 14px; padding: 8px 14px; }
     .backup-btns .pill:disabled { opacity: 0.5; }
+    .backup-btns .pill.on { background: #ffe3ec; border-color: var(--pink); }
+    .tv-admin-queue { margin: 10px 0 0; padding-left: 22px; font-size: 14px; line-height: 1.6; }
+    .tv-admin-queue li { word-break: break-all; }
+    .tv-admin-queue small { opacity: 0.55; }
+    .tv-admin-queue button { border: none; background: transparent; opacity: 0.5; font-size: 13px; padding: 0 6px; }
+    .tv-admin-queue button:hover { opacity: 1; color: #e0315f; }
     .danger {
       border: none;
       border-radius: 12px;
@@ -257,6 +263,22 @@
         <label>🧹 새 파티 시작 (초기화)</label>
         <p class="hint" style="margin: 0 0 10px">방명록과 선물 사진을 모두 지우고 새 파티를 시작해요. 파티 설정과 금지어는 그대로 남아요. 지우기 전에 위에서 백업을 받아 두세요.</p>
         <button type="button" id="resetBtn" class="danger">🧹 새 파티 시작하기</button>
+      </div>
+      <div class="settings">
+        <label>📺 파티 시네마</label>
+        <div id="tvNowAdmin" class="preview-line" style="margin: 0 0 10px">재생 중인 영상이 없어요.</div>
+        <div class="backup-btns">
+          <button type="button" class="pill" data-tv="skip">⏭ 다음 영상</button>
+          <button type="button" class="pill" data-tv="stop">⏹ 모두 끄기</button>
+          <button type="button" class="pill" data-tv="clear">🗑 대기열 비우기</button>
+          <button type="button" class="pill" id="tvLockBtn" data-tv="lock">🔒 잠그기</button>
+        </div>
+        <form id="tvAdminAdd" class="row" style="margin-top: 10px" autocomplete="off">
+          <input id="tvAdminUrl" class="party-input" maxlength="200" placeholder="유튜브 링크로 바로 신청">
+          <button type="submit" class="primary small">신청</button>
+        </form>
+        <ol id="tvAdminQueue" class="tv-admin-queue"></ol>
+        <p class="hint">잠그면 파티 화면에서는 영상을 신청할 수 없고, 여기서만 신청할 수 있어요. ⏹ 모두 끄기는 지금 영상과 대기열을 모두 비워요.</p>
       </div>
       <h2 class="section-title">🎁 선물 사진 <small id="giftTotal"></small></h2>
       <ul id="giftList"></ul>
@@ -452,6 +474,7 @@
           bannedWords = res.bannedWords || [];
           renderWords();
           fillParty(res);
+          setTv(res.tv);
           $('keyInput').value = '';
           $('loginError').textContent = '';
           $('loginForm').hidden = true;
@@ -599,6 +622,67 @@
           btn.disabled = false;
         }
       });
+
+      // 파티 시네마 관리
+      let tvState = null;
+      function setTv(st) {
+        if (!st) return;
+        tvState = st;
+        const now = $('tvNowAdmin');
+        now.textContent = '';
+        if (st.current) {
+          const b = document.createElement('b');
+          b.textContent = st.current.title;
+          now.append('▶ 재생 중: ', b, ` (${st.current.by}님 신청)`);
+        } else {
+          now.textContent = '재생 중인 영상이 없어요.';
+        }
+        const lock = $('tvLockBtn');
+        lock.dataset.tv = st.locked ? 'unlock' : 'lock';
+        lock.textContent = st.locked ? '🔓 잠금 풀기' : '🔒 잠그기';
+        lock.classList.toggle('on', st.locked);
+        const ol = $('tvAdminQueue');
+        ol.textContent = '';
+        for (const it of st.queue) {
+          const li = document.createElement('li');
+          li.append(document.createTextNode(it.title + ' '));
+          const who = document.createElement('small');
+          who.textContent = it.by;
+          const x = document.createElement('button');
+          x.type = 'button';
+          x.textContent = '✕';
+          x.title = '대기열에서 빼기';
+          x.dataset.tv = 'remove';
+          x.dataset.uid = it.uid;
+          li.append(who, x);
+          ol.appendChild(li);
+        }
+      }
+      function tvAction(action, uid) {
+        socket.timeout(8000).emit('admin:tv', { action, uid }, (err, res) => {
+          if (err) return toast('요청에 실패했어요. 다시 시도해 주세요.');
+          if (!res || !res.ok) return toast((res && res.error) || '요청에 실패했어요.');
+        });
+      }
+      $('panel').addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-tv]');
+        if (!btn || !adminKey) return;
+        const action = btn.dataset.tv;
+        if (action === 'stop' && !window.confirm('지금 영상과 대기열을 모두 끌까요?')) return;
+        tvAction(action, btn.dataset.uid);
+      });
+      $('tvAdminAdd').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const url = $('tvAdminUrl').value.trim();
+        if (!url || !adminKey) return;
+        socket.timeout(15000).emit('tv:add', { url }, (err, res) => {
+          if (err) return toast('신청에 실패했어요. 다시 시도해 주세요.');
+          if (!res || !res.ok) return toast((res && res.error) || '신청에 실패했어요.');
+          $('tvAdminUrl').value = '';
+          toast('영상을 신청했어요 🎬');
+        });
+      });
+      socket.on('tv:state', (st) => { if (adminKey) setTv(st); });
 
       // 새 파티 시작(초기화): 1단계 확인 → 2단계 비밀번호
       const resetModal = $('resetModal');

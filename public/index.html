@@ -12,6 +12,8 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- 시네마 유튜브 플레이어: 캔버스 뒤에 두고 스크린 자리만 보이게 함 -->
+  <div id="tvLayer" hidden><div id="tvPlayer"></div></div>
   <canvas id="game"></canvas>
 
   <!-- 게임 HUD -->
@@ -26,6 +28,7 @@
       <button id="btnChat" class="act" type="button" aria-label="채팅"><span>💬</span><small>채팅</small></button>
       <button id="btnFirework" class="act" type="button" aria-label="폭죽"><span>🎆</span><small>폭죽</small></button>
       <button id="btnGuestbook" class="act" type="button" aria-label="방명록"><span>📜</span><small>방명록</small><i class="badge" hidden></i></button>
+      <button id="btnTv" class="act" type="button" aria-label="영상"><span>📺</span><small>영상</small></button>
       <button id="btnGift" class="act" type="button" aria-label="선물 놓기"><span>🎁</span><small>선물</small></button>
       <input id="giftFile" type="file" accept="image/*" hidden>
       <button id="btnSound" class="act small" type="button" aria-label="소리"><span>🔊</span></button>
@@ -47,6 +50,31 @@
   </div>
 
   <div id="toasts"></div>
+
+  <!-- 파티 시네마 패널 -->
+  <div id="tvPanel" class="tv-panel" hidden>
+    <header>
+      <h2>📺 파티 시네마</h2>
+      <button type="button" id="tvClose" class="ghost" aria-label="닫기">✕</button>
+    </header>
+    <p id="tvHint" class="tv-hint"></p>
+    <div id="tvNow" class="tv-now empty"></div>
+    <div class="tv-ctrl">
+      <span aria-hidden="true">🔊</span>
+      <input id="tvVolume" type="range" min="0" max="100" aria-label="시네마 볼륨">
+      <button type="button" id="tvBig" class="pill">⛶ 크게 보기</button>
+    </div>
+    <form id="tvSearch" class="tv-search" autocomplete="off">
+      <input id="tvQuery" maxlength="200" placeholder="검색어 또는 유튜브 링크" enterkeyhint="search">
+      <button type="submit" id="tvSearchBtn" class="primary small">검색</button>
+    </form>
+    <ul id="tvResults" class="tv-results"></ul>
+    <h3 id="tvQueueTitle">대기열이 비어 있어요</h3>
+    <ol id="tvQueue" class="tv-queue"></ol>
+  </div>
+  <div id="tvBigBg" hidden></div>
+  <button type="button" id="tvBigClose" hidden>✕ 작게 보기</button>
+  <button type="button" id="tvSoundBtn" hidden>🔊 탭해서 시네마 소리 켜기</button>
 
   <!-- 참가 화면 -->
   <div id="join">

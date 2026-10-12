@@ -8,6 +8,7 @@ const WORLD = require('./public/world.js');
 const { createGuestbookStore } = require('./storage');
 const { createFilter, normalizeWord } = require('./filter');
 const { makeZip } = require('./zip');
+const { createCinema } = require('./cinema');
 
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS) || 50;
@@ -256,6 +257,7 @@ const io = new Server(server, { maxHttpBufferSize: 1_200_000 });
 
 const players = new Map();
 const filter = createFilter(); // 저장된 금지어가 있으면 시작할 때 덮어씀
+const cinema = createCinema({ io, filter, cleanText });
 const store = createGuestbookStore({ limit: GUESTBOOK_LIMIT });
 let guestbook = []; // 최신 글이 앞
 
@@ -290,11 +292,14 @@ function spawnPoint() {
 }
 
 io.on('connection', (socket) => {
-  socket.emit('hello', { ...partyConfig(), online: players.size, gifts: giftList() });
+  socket.emit('hello', { ...partyConfig(), online: players.size, gifts: giftList(), tv: cinema.state() });
 
   let player = null;
   let isAdmin = false;
   const last = { chat: 0, firework: 0, guestbook: 0, gift: 0 };
+
+  // 파티 시네마 (영상 검색·신청·끝남 알림)
+  cinema.attach(socket, () => ({ player, isAdmin }));
 
   socket.on('admin:login', async (d, ack) => {
     const reply = typeof ack === 'function' ? ack : () => {};
@@ -309,7 +314,7 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('[guestbook] 다시 불러오기 실패:', err.message);
     }
-    reply({ ok: true, guestbook, ...partyConfig(), gifts: giftList(), bannedWords: filter.words });
+    reply({ ok: true, guestbook, ...partyConfig(), gifts: giftList(), bannedWords: filter.words, tv: cinema.state() });
   });
 
   // 파티 설정 (주인공 이름, 파티 종류, 플랜카드 문구)
@@ -362,10 +367,19 @@ io.on('connection', (socket) => {
       return reply({ ok: false, error: `초기화 중 오류가 났어요: ${err.message}` });
     }
     guestbook = [];
+    cinema.reset();
     io.emit('guestbook:all', guestbook);
     io.emit('gifts:all', giftList());
     console.log(`[reset] 새 파티 시작: 방명록 ${removed.guestbook}개, 선물 ${removed.gifts}개 삭제`);
     reply({ ok: true, removed });
+  });
+
+  // 시네마 관리: skip(다음 영상) / stop(모두 끄기) / clear(대기열 비우기) / remove(하나 빼기) / lock / unlock
+  socket.on('admin:tv', (d, ack) => {
+    const reply = typeof ack === 'function' ? ack : () => {};
+    if (!isAdmin) return reply({ ok: false, error: '관리자만 조작할 수 있어요.' });
+    const ok = cinema.admin(String((d && d.action) || ''), String((d && d.uid) || ''));
+    reply(ok ? { ok: true } : { ok: false, error: '잘못된 요청이에요.' });
   });
 
   socket.on('admin:logout', () => {

@@ -2,6 +2,8 @@
   'use strict';
 
   const W = window.WORLD;
+  const RW = W.room.w; // 파티룸 폭 (오른쪽은 시네마 홀)
+  const CIN = W.cinema;
   const TAU = Math.PI * 2;
   const FONT = '"Jua", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
   const PALETTE = ['#ff6fa3', '#ffd166', '#7ad3f7', '#b39ddb', '#8bd3a5', '#ffb38a'];
@@ -82,7 +84,7 @@
 
   // ---------- 화면 크기 / 카메라 ----------
   let vw = 0, vh = 0, dpr = 1, scale = 1;
-  const cam = { x: W.w / 2, y: W.h / 2 };
+  const cam = { x: RW / 2, y: W.h / 2 };
   function resize() {
     vw = Math.max(1, window.innerWidth);
     vh = Math.max(1, window.innerHeight);
@@ -94,11 +96,15 @@
     updateCamera(0, true);
   }
   function updateCamera(dt, snap) {
-    let tx = me ? me.x : W.w / 2;
+    let tx = me ? me.x : RW / 2;
     let ty = me ? me.y - 40 : W.h / 2;
+    // 시네마 안에서는 스크린을 화면 가운데에 두되, 오른쪽 버튼 줄(약 84px)만큼 비켜서 맞춤
+    if (me && W.inCinema(me.x)) tx = CIN.screen.x + CIN.screen.w / 2 + 42 / scale;
     ty -= fx.dim * 220; // 폭죽이 터질 때는 하늘 쪽을 더 보여주기
     const hw = vw / scale / 2;
     const hh = vh / scale / 2;
+    // 시네마 안에서는 스크린 윗부분이 잘리지 않게 위쪽을 우선 보여주되, 내 캐릭터는 화면 안에 남도록
+    if (me && W.inCinema(me.x)) ty = Math.max(Math.min(ty, CIN.screen.y - 24 + hh), me.y + 80 - hh);
     tx = W.w <= hw * 2 ? W.w / 2 : clamp(tx, hw, W.w - hw);
     ty = W.h <= hh * 2 ? W.h / 2 : clamp(ty, hh, W.h - hh);
     const k = snap ? 1 : Math.min(1, dt * 6);
@@ -118,7 +124,7 @@
   const modalOpen = () => !$('gbModal').hidden || !$('giftModal').hidden;
 
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closeChat(); closeGuestbook(); closeGift(); return; }
+    if (e.key === 'Escape') { closeChat(); closeGuestbook(); closeGift(); closeTvBig(); closeTvPanel(); return; }
     if (isTyping() || !joined || modalOpen()) return;
     const k = e.key.toLowerCase();
     if (MOVE_KEYS.includes(k)) { keys.add(k); e.preventDefault(); }
@@ -245,7 +251,7 @@
     const arr = [];
     for (let i = 0; i < 170; i++) {
       arr.push({
-        x: r() * W.w,
+        x: r() * RW,
         y: W.wallH + 14 + r() * (W.h - W.wallH - 24),
         a: r() * Math.PI,
         c: PALETTE[Math.floor(r() * PALETTE.length)],
@@ -316,6 +322,8 @@
       ctx.restore();
     }
 
+    drawCinemaFloor(t);
+
     // 폭죽 근처 표시
     W.launchers.forEach((L, i) => {
       const active = i === nearLauncher;
@@ -337,16 +345,16 @@
   function drawWall(t) {
     const h = W.wallH;
     ctx.fillStyle = '#ffc6d7';
-    ctx.fillRect(0, 0, W.w, h);
+    ctx.fillRect(0, 0, RW, h);
     ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    for (let x = 0; x < W.w; x += 44) ctx.fillRect(x, 0, 22, h);
+    for (let x = 0; x < RW; x += 44) ctx.fillRect(x, 0, 22, h);
     ctx.fillStyle = '#ec97b5';
-    ctx.fillRect(0, h - 14, W.w, 14);
+    ctx.fillRect(0, h - 14, RW, 14);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(0, h - 14, W.w, 3);
+    ctx.fillRect(0, h - 14, RW, 3);
 
     // 가랜드
-    const swags = [[0, W.w / 2], [W.w / 2, W.w]];
+    const swags = [[0, RW / 2], [RW / 2, RW]];
     swags.forEach(([x0, x1], si) => {
       const yAt = (u) => 14 + 4 * 26 * u * (1 - u);
       ctx.strokeStyle = '#a0607e';
@@ -377,6 +385,8 @@
       }
     });
 
+    drawCinemaWall(t);
+
     const b = bannerLayout();
     ctx.font = `${b.size}px ${FONT}`;
     ctx.textAlign = 'center';
@@ -386,8 +396,8 @@
     ctx.strokeStyle = '#e05a8a';
     ctx.fillStyle = '#ffffff';
     b.lines.forEach((line, i) => {
-      ctx.strokeText(line, W.w / 2, b.ys[i], BANNER_MAX_W);
-      ctx.fillText(line, W.w / 2, b.ys[i], BANNER_MAX_W);
+      ctx.strokeText(line, RW / 2, b.ys[i], BANNER_MAX_W);
+      ctx.fillText(line, RW / 2, b.ys[i], BANNER_MAX_W);
     });
   }
 
@@ -844,6 +854,227 @@
     return best;
   }
 
+  // ---------- 그리기: 시네마 홀 ----------
+  function drawCinemaFloor(t) {
+    const x0 = CIN.x0;
+    // 카펫
+    ctx.fillStyle = '#3d1d3c';
+    ctx.fillRect(x0, W.wallH, W.w - x0, W.h - W.wallH);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, W.wallH, CIN.x1 - x0, W.h - W.wallH);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(255,190,220,0.05)';
+    for (let y = W.wallH, row = 0; y < W.h; y += 36, row++) {
+      for (let x = x0 + (row % 2) * 18; x < CIN.x1; x += 36) {
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, TAU);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+    // 가운데 통로와 통로등
+    const a = CIN.aisle;
+    ctx.fillStyle = '#52264f';
+    ctx.fillRect(a.x, CIN.stage.y + CIN.stage.h + 20, a.w, W.h);
+    for (let y = 360; y < W.h; y += 56) {
+      oval(ctx, a.x + 6, y, 3.5, 3, 'rgba(255,214,120,0.95)');
+      oval(ctx, a.x + a.w - 6, y, 3.5, 3, 'rgba(255,214,120,0.95)');
+    }
+    // 영사기 빛 (영상이 나올 때만 은은하게)
+    if (tvState.current) {
+      const s = CIN.screen;
+      const p = CIN.projector;
+      const g = ctx.createLinearGradient(0, p.y, 0, s.y + s.h);
+      g.addColorStop(0, 'rgba(255,240,200,0.10)');
+      g.addColorStop(1, 'rgba(255,240,200,0.02)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(p.x - 6, p.y - 30);
+      ctx.lineTo(s.x + 20, s.y + s.h);
+      ctx.lineTo(s.x + s.w - 20, s.y + s.h);
+      ctx.lineTo(p.x + 6, p.y - 30);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // 파티룸과의 경계 벽
+    const d = CIN.door;
+    const wall = (y0, y1) => {
+      ctx.fillStyle = '#e895b0';
+      ctx.fillRect(RW, y0, x0 - RW, y1 - y0);
+      ctx.fillStyle = '#ffc6d7';
+      ctx.fillRect(RW, y0, x0 - RW, 10);
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillRect(RW + 4, y0, 4, y1 - y0);
+    };
+    wall(W.wallH, d.y0);
+    wall(d.y1, W.h);
+    // 문 앞 매트
+    rrect(ctx, RW - 14, d.y0 + 10, x0 - RW + 28, d.y1 - d.y0 - 20, 10);
+    ctx.fillStyle = '#b8325f';
+    ctx.fill();
+    // 문 위 간판 (전구가 깜빡이는 마퀴)
+    const mx = (RW + x0) / 2;
+    const my = d.y0 - 28;
+    rrect(ctx, mx - 82, my - 22, 164, 44, 10);
+    ctx.fillStyle = '#2b1d3a';
+    ctx.fill();
+    ctx.strokeStyle = '#ffd166';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    for (let k = 0; k < 14; k++) {
+      const on = (Math.floor(t * 4) + k) % 2 === 0;
+      const bx = mx - 74 + (k % 7) * 24.6;
+      const by = k < 7 ? my - 22 : my + 22;
+      oval(ctx, bx, by, 3, 3, on ? '#fff3b0' : '#b38a3a');
+    }
+    ctx.font = `17px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffd166';
+    ctx.fillText('🎬 PARTY CINEMA', mx, my + 1);
+  }
+
+  // 글자가 폭을 넘으면 말줄임
+  function fitText(text, maxW) {
+    if (ctx.measureText(text).width <= maxW) return text;
+    const chars = Array.from(text);
+    while (chars.length && ctx.measureText(chars.join('') + '…').width > maxW) chars.pop();
+    return chars.join('') + '…';
+  }
+
+  function drawCinemaWall(t) {
+    const x0 = CIN.x0;
+    const h = W.wallH;
+    // 어두운 벽 + 커튼 (시네마 오른쪽 바깥은 벽으로 채움)
+    ctx.fillStyle = '#2a1630';
+    ctx.fillRect(RW, 0, W.w - RW, h);
+    ctx.fillRect(CIN.x1, 0, W.w - CIN.x1, W.h);
+    const curtain = (x, w) => {
+      for (let k = 0; k < w; k += 12) {
+        ctx.fillStyle = (k / 12) % 2 ? '#a3123d' : '#c41a4c';
+        ctx.fillRect(x + k, 0, 12, h + 30);
+      }
+    };
+    curtain(x0 - 32, 44);
+    curtain(CIN.x1 - 44, 44);
+
+    // 무대 + 지금 영상 정보
+    const st = CIN.stage;
+    ctx.fillStyle = '#7a4a2e';
+    ctx.fillRect(st.x, st.y, st.w, st.h);
+    ctx.fillStyle = '#9b6340';
+    ctx.fillRect(st.x, st.y, st.w, 6);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(st.x, st.y + st.h - 5, st.w, 5);
+    const cur = tvState.current;
+    if (cur) {
+      const el = tvElapsed();
+      if (cur.duration) {
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.fillRect(st.x, st.y, st.w, 3);
+        ctx.fillStyle = '#ff4d6d';
+        ctx.fillRect(st.x, st.y, st.w * clamp(el / cur.duration, 0, 1), 3);
+      }
+      ctx.font = `13px ${FONT}`;
+      ctx.textBaseline = 'middle';
+      const right = `${cur.by}님 신청${tvState.queue.length ? ` · 다음 ${tvState.queue.length}개` : ''}`;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = 'rgba(255,240,220,0.75)';
+      ctx.fillText(right, st.x + st.w - 12, st.y + st.h / 2 + 1);
+      const rw = ctx.measureText(right).width;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fff6e6';
+      ctx.fillText(fitText(`▶ ${cur.title}`, st.w - rw - 40), st.x + 12, st.y + st.h / 2 + 1);
+    }
+
+    // 스크린
+    const s = CIN.screen;
+    rrect(ctx, s.x - 12, s.y - 12, s.w + 24, s.h + 24, 10);
+    ctx.fillStyle = '#111';
+    ctx.fill();
+    if (tvOnScreen()) {
+      // 캔버스에 구멍을 뚫어 뒤에 있는 유튜브 플레이어가 보이게 함 (캐릭터는 그 위에 그려짐)
+      ctx.clearRect(s.x, s.y, s.w, s.h);
+      return;
+    }
+    const g = ctx.createLinearGradient(s.x, s.y, s.x, s.y + s.h);
+    g.addColorStop(0, '#2d1b46');
+    g.addColorStop(1, '#16101f');
+    ctx.fillStyle = g;
+    ctx.fillRect(s.x, s.y, s.w, s.h);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(s.x, s.y, s.w, s.h);
+    ctx.clip();
+    for (let i = 0; i < 18; i++) {
+      const a = 0.25 + 0.25 * Math.sin(t * 2 + i * 1.7);
+      oval(ctx, s.x + ((i * 97) % s.w), s.y + ((i * 53) % s.h), 1.6, 1.6, `rgba(255,240,200,${a})`);
+    }
+    ctx.restore();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#ffd166';
+    ctx.font = `30px ${FONT}`;
+    if (tvBig) {
+      ctx.fillText('⛶ 크게 보는 중', s.x + s.w / 2, s.y + s.h / 2);
+    } else if (cur && joined) {
+      const dots = '.'.repeat(1 + (Math.floor(t * 3) % 3));
+      ctx.fillText(`불러오는 중${dots}`, s.x + s.w / 2, s.y + s.h / 2);
+    } else {
+      ctx.fillText('🎬 PARTY CINEMA', s.x + s.w / 2, s.y + s.h / 2 - 16);
+      ctx.font = `15px ${FONT}`;
+      ctx.fillStyle = 'rgba(255,240,220,0.8)';
+      ctx.fillText('📺 영상 버튼으로 보고 싶은 영상을 신청해 보세요', s.x + s.w / 2, s.y + s.h / 2 + 22);
+    }
+  }
+
+  function drawSeatRow(ry, block) {
+    const w = CIN.seatW;
+    for (let k = 0; k < block.n; k++) {
+      const x = block.x + k * w;
+      oval(ctx, x + w / 2 + 3, ry + 2, w / 2, 6, 'rgba(0,0,0,0.25)');
+      ctx.fillStyle = '#9e1d45';
+      rrect(ctx, x + 3, ry - 34, w - 6, 20, 7);
+      ctx.fill();
+      ctx.fillStyle = '#c4285a';
+      rrect(ctx, x + 3, ry - 16, w - 6, 14, 5);
+      ctx.fill();
+      ctx.fillStyle = '#5a1530';
+      ctx.fillRect(x, ry - 20, 3, 18);
+    }
+    ctx.fillStyle = '#5a1530';
+    ctx.fillRect(block.x + block.n * w - 3, ry - 20, 3, 18);
+  }
+
+  function drawPopcornStand(t) {
+    const { x, y } = CIN.popcorn;
+    oval(ctx, x + 3, y + 2, 28, 9, 'rgba(0,0,0,0.25)');
+    ctx.fillStyle = '#c41a4c';
+    ctx.fillRect(x - 24, y - 40, 48, 40);
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillRect(x - 18, y - 36, 36, 22);
+    for (let i = 0; i < 9; i++) {
+      oval(ctx, x - 12 + (i % 3) * 12, y - 20 - Math.floor(i / 3) * 6 + Math.sin(t * 3 + i) * 1.5, 5, 4.5, '#fff6d6');
+    }
+    ctx.fillStyle = '#ffd166';
+    ctx.font = `11px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('POPCORN', x, y - 47);
+  }
+
+  function drawProjector() {
+    const { x, y } = CIN.projector;
+    oval(ctx, x + 3, y + 2, 24, 8, 'rgba(0,0,0,0.25)');
+    ctx.fillStyle = '#4a3a52';
+    ctx.fillRect(x - 4, y - 18, 8, 18);
+    ctx.fillStyle = '#6b5878';
+    rrect(ctx, x - 20, y - 38, 40, 22, 6);
+    ctx.fill();
+    oval(ctx, x, y - 38, 7, 5, tvState.current ? '#fff3b0' : '#8a7a90');
+  }
+
   function drawBalloons(b, t, bi) {
     const { x, y } = b;
     oval(ctx, x, y, 14, 5, 'rgba(90,30,70,0.15)');
@@ -1262,6 +1493,7 @@
     }
 
     updateGifts(dt, t);
+    updateTv(t);
     updateFx(dt);
     updateCamera(dt, false);
   }
@@ -1286,6 +1518,9 @@
     W.launchers.forEach((L, i) => ents.push({ y: L.y, d: () => drawLauncher(L, i, t) }));
     W.gifts.forEach((g) => ents.push({ y: g.y, d: () => drawGift(g) }));
     for (const g of gifts.values()) ents.push({ y: g.y - 0.01, d: () => drawDroppedGift(g, t) });
+    CIN.rows.forEach((ry) => CIN.blocks.forEach((bl) => ents.push({ y: ry, d: () => drawSeatRow(ry, bl) })));
+    ents.push({ y: CIN.popcorn.y, d: () => drawPopcornStand(t) });
+    ents.push({ y: CIN.projector.y, d: () => drawProjector() });
     W.balloons.forEach((b, i) => ents.push({ y: b.y, d: () => drawBalloons(b, t, i) }));
     for (const p of players.values()) ents.push({ y: p.y + (p === me ? 0.01 : 0), d: () => drawPlayer(p, t) });
     ents.sort((a, b) => a.y - b.y);
@@ -1498,6 +1733,336 @@
     });
   });
 
+  // ---------- 파티 시네마 (유튜브) ----------
+  // 서버가 정한 시작 시각(startedAt)에 맞춰 각자 재생. 소리는 시네마 안에 있을 때만.
+  // 유튜브 플레이어는 캔버스 "뒤"에 두고, 스크린 자리에 캔버스 구멍을 뚫어 보여줌 → 캐릭터가 영상 앞을 지나갈 수 있음
+  const YT_W = 480; // 플레이어는 이 크기로 만들고 CSS로 축소 (유튜브 권장 최소 크기 유지)
+  const YT_H = 270;
+  const tvLayer = $('tvLayer');
+  let tvState = { current: null, queue: [], locked: false, searchEnabled: false };
+  let tvOffset = 0; // 서버 시계 - 내 시계 (ms)
+  let ytApi = 'idle'; // idle | loading | ready
+  let yt = null;
+  let ytReady = false;
+  let ytLoadedUid = null;
+  let ytShowing = false;
+  let tvBig = false;
+  let lastSync = 0;
+  let lastSoundCheck = 0;
+  let soundTry = 0;
+  let lastInside = null;
+  let tvVolume = clamp(Number(store.get('hbd:tvVolume') || 70), 0, 100);
+
+  const tvElapsed = () => (tvState.current ? (Date.now() + tvOffset - tvState.current.startedAt) / 1000 : 0);
+  const tvOnScreen = () => !tvBig && ytShowing && !!tvState.current && ytLoadedUid === tvState.current.uid;
+  const insideCinema = () => !!(joined && me && W.inCinema(me.x));
+
+  function setTvState(st) {
+    if (!st) return;
+    tvOffset = st.serverNow - Date.now();
+    tvState = st;
+    renderTvPanel();
+  }
+
+  function loadYouTubeApi() {
+    if (ytApi !== 'idle') return;
+    ytApi = 'loading';
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      ytApi = 'ready';
+      if (typeof prev === 'function') prev();
+    };
+    const s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = () => { ytApi = 'idle'; };
+    document.head.appendChild(s);
+  }
+
+  function ensurePlayer() {
+    if (yt || ytApi !== 'ready' || !window.YT || !window.YT.Player) return;
+    yt = new window.YT.Player('tvPlayer', {
+      width: YT_W,
+      height: YT_H,
+      playerVars: { autoplay: 1, mute: 1, controls: 0, disablekb: 1, fs: 0, rel: 0, playsinline: 1, iv_load_policy: 3 },
+      events: {
+        onReady: () => { ytReady = true; },
+        onStateChange: (e) => {
+          const S = window.YT.PlayerState;
+          if (e.data === S.PLAYING || e.data === S.BUFFERING || e.data === S.PAUSED) ytShowing = true;
+          const cur = tvState.current;
+          if (e.data === S.ENDED && cur && ytLoadedUid === cur.uid) socket.emit('tv:ended', { uid: cur.uid });
+        },
+        onError: () => {
+          const cur = tvState.current;
+          if (cur && ytLoadedUid === cur.uid) socket.emit('tv:error', { uid: cur.uid });
+        },
+      },
+    });
+  }
+
+  // 스크린의 화면 위치(CSS px)
+  function screenRectCss() {
+    const s = CIN.screen;
+    return { x: (s.x - cam.x) * scale + vw / 2, y: (s.y - cam.y) * scale + vh / 2, w: s.w * scale, h: s.h * scale };
+  }
+
+  function placeTvLayer() {
+    if (tvBig) {
+      const w = Math.min(vw * 0.94, ((vh - 120) * 16) / 9);
+      const k = w / YT_W;
+      tvLayer.style.transform = `translate(${(vw - w) / 2}px, ${(vh - (w * 9) / 16) / 2}px) scale(${k})`;
+    } else {
+      const r = screenRectCss();
+      tvLayer.style.transform = `translate(${r.x}px, ${r.y}px) scale(${r.w / YT_W})`;
+    }
+  }
+
+  function updateTv(t) {
+    const cur = tvState.current;
+    const inside = insideCinema();
+    if (inside !== lastInside) {
+      lastInside = inside;
+      renderTvHint();
+      if (!inside) closeTvBig();
+    }
+    const r = screenRectCss();
+    const visible = r.x < vw && r.x + r.w > 0 && r.y < vh && r.y + r.h > 0;
+    const want = joined && !!cur && (visible || inside || tvBig);
+    if (want) {
+      loadYouTubeApi();
+      ensurePlayer();
+    }
+    tvLayer.hidden = !(want && ytReady);
+    if (!tvLayer.hidden) placeTvLayer();
+    updateTvProgress(t);
+    if (!ytReady) return;
+
+    if (!want) {
+      if (ytLoadedUid) {
+        yt.stopVideo();
+        ytLoadedUid = null;
+        ytShowing = false;
+      }
+      $('tvSoundBtn').hidden = true;
+      return;
+    }
+    const el = tvElapsed();
+    if (ytLoadedUid !== cur.uid) {
+      ytLoadedUid = cur.uid;
+      ytShowing = false;
+      yt.loadVideoById({ videoId: cur.id, startSeconds: Math.max(0, el) });
+      lastSync = t;
+    } else if (t - lastSync > 4 && el >= 0) {
+      // 몇 초마다 서버 시간에 다시 맞춤 (광고·끊김으로 어긋나는 것 보정)
+      lastSync = t;
+      const S = window.YT.PlayerState;
+      const st = yt.getPlayerState();
+      if (st === S.PAUSED || st === S.CUED || st === -1) yt.playVideo();
+      else if (st === S.PLAYING && Math.abs(yt.getCurrentTime() - el) > 2.5) yt.seekTo(el, true);
+    }
+
+    // 소리: 시네마 안(또는 크게 보기)에서만, 전체 소리 끄기면 끔
+    if (t - lastSoundCheck > 0.3) {
+      lastSoundCheck = t;
+      const wantSound = (inside || tvBig) && !muted;
+      if (wantSound) {
+        if (yt.isMuted()) {
+          yt.unMute();
+          if (!soundTry) soundTry = t;
+        } else soundTry = 0;
+        yt.setVolume(tvVolume);
+      } else {
+        soundTry = 0;
+        if (!yt.isMuted()) yt.mute();
+      }
+      // 브라우저가 자동 소리를 막으면(주로 아이폰) 직접 누를 버튼 표시
+      $('tvSoundBtn').hidden = !(wantSound && soundTry && t - soundTry > 1.5 && ytShowing);
+    }
+  }
+
+  // ----- 패널 -----
+  const tvPanel = $('tvPanel');
+  const pad2 = (n) => String(n).padStart(2, '0');
+  function fmtDur(sec) {
+    if (sec == null || !Number.isFinite(sec)) return '';
+    sec = Math.max(0, Math.floor(sec));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    return h ? `${h}:${pad2(m)}:${pad2(sec % 60)}` : `${m}:${pad2(sec % 60)}`;
+  }
+  function thumb(id) {
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.loading = 'lazy';
+    img.alt = '';
+    img.src = `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+    return img;
+  }
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function renderTvHint() {
+    const inside = insideCinema();
+    $('tvHint').textContent = tvState.locked
+      ? '🔒 지금은 관리자만 영상을 틀 수 있어요'
+      : inside
+        ? '🎬 시네마 안이라 소리가 들려요'
+        : '🔇 소리는 시네마 안에서만 들려요 (오른쪽 문으로 들어가세요)';
+    $('tvBig').disabled = !inside || !tvState.current;
+  }
+
+  function renderTvPanel() {
+    renderTvHint();
+    const now = $('tvNow');
+    now.textContent = '';
+    const cur = tvState.current;
+    if (!cur) {
+      now.className = 'tv-now empty';
+      now.textContent = '아직 재생 중인 영상이 없어요. 보고 싶은 영상을 신청해 보세요!';
+    } else {
+      now.className = 'tv-now';
+      const info = el('div', 'info');
+      info.append(el('b', null, cur.title), el('small', null, `${cur.by}님 신청 · `));
+      const time = el('span', null, '');
+      time.id = 'tvTime';
+      info.lastChild.appendChild(time);
+      const bar = el('div', 'bar');
+      const fill = el('i');
+      fill.id = 'tvBar';
+      bar.appendChild(fill);
+      info.appendChild(bar);
+      now.append(thumb(cur.id), info);
+    }
+    const q = $('tvQueue');
+    q.textContent = '';
+    tvState.queue.forEach((it) => {
+      const li = el('li', null, it.title);
+      li.appendChild(el('small', null, ` ${it.by}`));
+      q.appendChild(li);
+    });
+    $('tvQueueTitle').textContent = tvState.queue.length ? `대기열 ${tvState.queue.length}개` : '대기열이 비어 있어요';
+    $('tvQuery').placeholder = tvState.searchEnabled ? '검색어 또는 유튜브 링크' : '유튜브 링크를 붙여 넣어 주세요';
+    $('tvSearchBtn').textContent = tvState.searchEnabled ? '검색' : '신청';
+    $('tvQuery').disabled = tvState.locked;
+    $('tvSearchBtn').disabled = tvState.locked;
+    lastProgress = 0;
+  }
+
+  let lastProgress = 0;
+  function updateTvProgress(t) {
+    if (tvPanel.hidden || !tvState.current || t - lastProgress < 0.5) return;
+    lastProgress = t;
+    const cur = tvState.current;
+    const e = Math.max(0, tvElapsed());
+    const time = $('tvTime');
+    const bar = $('tvBar');
+    if (time) time.textContent = cur.duration ? `${fmtDur(e)} / ${fmtDur(cur.duration)}` : fmtDur(e);
+    if (bar) bar.style.width = cur.duration ? `${clamp((e / cur.duration) * 100, 0, 100)}%` : '0%';
+  }
+
+  function openTvPanel() {
+    closeChat();
+    tvPanel.hidden = false;
+    renderTvPanel();
+  }
+  function closeTvPanel() {
+    tvPanel.hidden = true;
+    $('tvQuery').blur();
+  }
+  $('btnTv').addEventListener('click', () => {
+    if (!joined) return;
+    ensureAudio();
+    if (tvPanel.hidden) openTvPanel();
+    else closeTvPanel();
+  });
+  $('tvClose').addEventListener('click', closeTvPanel);
+
+  function tvAdd(payload, input) {
+    socket.timeout(15000).emit('tv:add', payload, (err, res) => {
+      if (err) return toast('신청에 실패했어요. 다시 시도해 주세요.');
+      if (!res || !res.ok) return toast((res && res.error) || '신청에 실패했어요.');
+      if (input) input.value = '';
+    });
+  }
+
+  function renderResults(results) {
+    const ul = $('tvResults');
+    ul.textContent = '';
+    if (!results.length) {
+      ul.appendChild(el('li', 'empty', '검색 결과가 없어요.'));
+      return;
+    }
+    for (const r of results) {
+      const li = el('li');
+      const info = el('div', 'info');
+      info.append(el('b', null, r.title), el('small', null, [r.channel, fmtDur(r.duration)].filter(Boolean).join(' · ')));
+      const btn = el('button', 'pill', '신청');
+      btn.type = 'button';
+      btn.addEventListener('click', () => tvAdd({ videoId: r.id }));
+      li.append(thumb(r.id), info, btn);
+      ul.appendChild(li);
+    }
+  }
+
+  $('tvSearch').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = $('tvQuery');
+    const q = input.value.trim();
+    if (!q) return input.focus();
+    const isLink = /youtu\.?be|youtube\.com/i.test(q) || /^[A-Za-z0-9_-]{11}$/.test(q);
+    if (isLink || !tvState.searchEnabled) return tvAdd({ url: q }, input);
+    const btn = $('tvSearchBtn');
+    btn.disabled = true;
+    socket.timeout(12000).emit('tv:search', { q }, (err, res) => {
+      btn.disabled = tvState.locked;
+      if (err) return toast('검색에 실패했어요. 다시 시도해 주세요.');
+      if (!res || !res.ok) return toast((res && res.error) || '검색에 실패했어요.');
+      renderResults(res.results);
+    });
+  });
+
+  const tvVol = $('tvVolume');
+  tvVol.value = tvVolume;
+  tvVol.addEventListener('input', () => {
+    tvVolume = clamp(Number(tvVol.value) || 0, 0, 100);
+    store.set('hbd:tvVolume', String(tvVolume));
+    if (yt && ytReady && !yt.isMuted()) yt.setVolume(tvVolume);
+  });
+
+  // 크게 보기 (시네마 안에서만)
+  function openTvBig() {
+    if (!insideCinema()) return toast('시네마 안에서 크게 볼 수 있어요 🎬');
+    if (!tvState.current) return;
+    tvBig = true;
+    tvLayer.classList.add('big');
+    $('tvBigBg').hidden = false;
+    $('tvBigClose').hidden = false;
+    closeTvPanel();
+  }
+  function closeTvBig() {
+    if (!tvBig) return;
+    tvBig = false;
+    tvLayer.classList.remove('big');
+    $('tvBigBg').hidden = true;
+    $('tvBigClose').hidden = true;
+  }
+  $('tvBig').addEventListener('click', openTvBig);
+  $('tvBigClose').addEventListener('click', closeTvBig);
+  $('tvBigBg').addEventListener('click', closeTvBig);
+
+  // 브라우저가 소리를 막았을 때: 사용자가 직접 눌러야 소리가 남
+  $('tvSoundBtn').addEventListener('click', () => {
+    if (!yt || !ytReady) return;
+    yt.unMute();
+    yt.setVolume(tvVolume);
+    soundTry = 0;
+    $('tvSoundBtn').hidden = true;
+  });
+
   // 선물: 사진 올리기 / 열어보기
   const giftModal = $('giftModal');
   const giftFile = $('giftFile');
@@ -1647,6 +2212,7 @@
     }
   });
   socket.on('hello', (d) => {
+    setTvState(d.tv);
     setParty(d);
     gifts.clear();
     for (const g of d.gifts || []) addGift(g, false);
@@ -1745,6 +2311,8 @@
       }
     }, 250);
   });
+  socket.on('tv:state', setTvState);
+  socket.on('tv:notice', (text) => { if (joined) toast(text, 2800); });
   socket.on('config', (d) => {
     setParty(d);
   });
