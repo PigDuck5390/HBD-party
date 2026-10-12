@@ -11,7 +11,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Jua&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
   <style>
-    html, body { overflow: auto; position: static; height: auto; min-height: 100%; }
+    /* 파티 화면용 style.css는 화면을 고정(스크롤 막음)하므로 관리자 페이지에서는 되돌림.
+       body까지 overflow:auto면 body가 별도 스크롤 영역이 되고, overscroll-behavior:none 때문에
+       휠 스크롤이 페이지로 넘어가지 않아 스크롤이 안 됨 → 스크롤은 페이지(html)만 담당 */
+    html, body { position: static; height: auto; min-height: 100%; overscroll-behavior: auto; }
+    html { overflow-y: auto; }
+    body { overflow: visible; }
     html { background: #efe6ff; }
     body {
       background: radial-gradient(circle at 50% 0%, #ffd6e4, #f3e8ff 60%, #efe6ff) no-repeat;
