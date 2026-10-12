@@ -49,6 +49,7 @@ function isoDuration(s) {
 
 function createCinema({ io, filter, cleanText }) {
   const apiKey = String(process.env.YOUTUBE_API_KEY || '').trim();
+  console.log(`[cinema] 유튜브 검색 ${apiKey ? '켜짐' : '꺼짐 (YOUTUBE_API_KEY 없음 → 링크 붙여넣기만 가능)'}`);
   const tv = { current: null, queue: [], locked: false };
   let timer = null;
   const searchCache = new Map(); // 검색어 -> { at, results }
@@ -60,6 +61,22 @@ function createCinema({ io, filter, cleanText }) {
     const body = await res.json().catch(() => ({}));
     return { status: res.status, body };
   };
+
+  // YouTube Data API 오류 구분: 한도 초과면 1시간 쉬고, 키 설정 문제면 이유를 서버 로그에 남김
+  const QUOTA_REASONS = ['quotaExceeded', 'dailyLimitExceeded', 'rateLimitExceeded', 'userRateLimitExceeded'];
+  function apiFailure(where, status, body) {
+    const err = (body && body.error) || {};
+    const reason = (err.errors && err.errors[0] && err.errors[0].reason) || err.status || '';
+    console.error(`[cinema] YouTube API ${where} 실패: ${status} ${reason} - ${err.message || ''}`);
+    if (QUOTA_REASONS.includes(reason)) {
+      quotaBlockedUntil = Date.now() + 60 * 60 * 1000;
+      return '오늘 검색 한도를 다 썼어요. 유튜브 링크를 붙여 넣어 주세요.';
+    }
+    if (status === 400 || status === 403) {
+      return '검색 설정(API 키)에 문제가 있어요. 링크를 붙여 넣어 주세요. (관리자: Render 로그 확인)';
+    }
+    return '검색에 실패했어요. 잠시 후 다시 시도해 주세요.';
+  }
 
   const publicItem = (it) => it && {
     uid: it.uid, id: it.id, title: it.title, channel: it.channel, duration: it.duration,
@@ -107,7 +124,7 @@ function createCinema({ io, filter, cleanText }) {
           meta.set(id, info);
           return { ok: true, ...info };
         }
-        if (status === 403) quotaBlockedUntil = Date.now() + 60 * 60 * 1000;
+        apiFailure('영상 정보', status, body);
       } catch { /* 아래 oEmbed로 */ }
     }
     try {
@@ -129,11 +146,7 @@ function createCinema({ io, filter, cleanText }) {
     try {
       const su = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=8&safeSearch=moderate&regionCode=KR&relevanceLanguage=ko&q=${encodeURIComponent(q)}&key=${encodeURIComponent(apiKey)}`;
       const s = await fetchJson(su);
-      if (s.status === 403) {
-        quotaBlockedUntil = Date.now() + 60 * 60 * 1000;
-        return { ok: false, error: '오늘 검색 한도를 다 썼어요. 유튜브 링크를 붙여 넣어 주세요.' };
-      }
-      if (s.status !== 200) return { ok: false, error: '검색에 실패했어요. 잠시 후 다시 시도해 주세요.' };
+      if (s.status !== 200) return { ok: false, error: apiFailure('검색', s.status, s.body) };
       const ids = (s.body.items || []).map((it) => it.id && it.id.videoId).filter((id) => ID_RE.test(id || ''));
       let durations = {};
       if (ids.length) {
