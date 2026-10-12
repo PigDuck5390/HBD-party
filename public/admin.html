@@ -128,6 +128,9 @@
     .gb-del:disabled { opacity: 0.5; }
     .gb-item.removing { opacity: 0; transform: scale(0.96); transition: opacity 0.25s, transform 0.25s; }
     #toasts { top: auto; bottom: calc(24px + var(--safe-b)); }
+    .backup-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+    .backup-btns .pill { font-size: 14px; padding: 8px 14px; }
+    .backup-btns .pill:disabled { opacity: 0.5; }
   </style>
 </head>
 <body>
@@ -168,6 +171,16 @@
         <p class="hint">이름에 들어 있으면 참가가 막히고, 채팅·방명록에서는 ***로 가려져요. 띄어쓰기·숫자·기호를 끼운 변형도 잡아요.</p>
         <div id="chips" class="chips"></div>
       </form>
+      <div class="settings">
+        <label>💾 백업</label>
+        <div class="backup-btns">
+          <button type="button" id="backupBtn" class="pill">⬇ 전체 백업 받기 (.json)</button>
+          <button type="button" id="keepsakeBtn" class="pill">🖼 사진·방명록 모아 받기 (.zip)</button>
+          <button type="button" id="restoreBtn" class="pill">⬆ 백업 복원하기</button>
+          <input id="restoreFile" type="file" accept=".json,application/json" hidden>
+        </div>
+        <p class="hint">전체 백업(.json)은 다른 서버에 그대로 복원할 수 있어요. 모아 받기(.zip)는 사진(JPG)과 방명록(TXT)을 추억용으로 보관할 때 좋아요.<br>복원하면 지금 데이터에 합쳐지고(같은 글·선물은 건너뜀), 주인공 이름과 금지어는 백업 값으로 바뀌어요.</p>
+      </div>
       <h2 class="section-title">🎁 선물 사진 <small id="giftTotal"></small></h2>
       <ul id="giftList"></ul>
       <h2 class="section-title">📜 방명록 <small id="total"></small></h2>
@@ -379,6 +392,74 @@
         if (btn && adminKey) sendWords('remove', [btn.dataset.word]);
       });
 
+      // 백업 받기 / 복원
+      const authHeader = () => ({ 'x-admin-key': encodeURIComponent(adminKey || '') });
+      async function errorOf(res) {
+        try { return (await res.json()).error; } catch { return null; }
+      }
+      async function download(path, fallbackName, btn) {
+        if (!adminKey) return;
+        btn.disabled = true;
+        toast('파일을 준비하는 중…', 1500);
+        try {
+          const res = await fetch(path, { headers: authHeader() });
+          if (!res.ok) return toast((await errorOf(res)) || '다운로드에 실패했어요.');
+          const blob = await res.blob();
+          const m = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '');
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = m ? m[1] : fallbackName;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+          toast(`다운로드했어요 (${(blob.size / 1024 / 1024).toFixed(1)}MB)`);
+        } catch {
+          toast('다운로드에 실패했어요. 다시 시도해 주세요.');
+        } finally {
+          btn.disabled = false;
+        }
+      }
+      $('backupBtn').addEventListener('click', (e) => download('/admin/api/backup', 'hbd-backup.json', e.currentTarget));
+      $('keepsakeBtn').addEventListener('click', (e) => download('/admin/api/keepsake', 'hbd-keepsake.zip', e.currentTarget));
+      $('restoreBtn').addEventListener('click', () => { if (adminKey) $('restoreFile').click(); });
+      $('restoreFile').addEventListener('change', async () => {
+        const file = $('restoreFile').files[0];
+        $('restoreFile').value = '';
+        if (!file) return;
+        let text;
+        let data;
+        try {
+          text = await file.text();
+          data = JSON.parse(text);
+        } catch {
+          return toast('백업 파일을 읽지 못했어요.');
+        }
+        if (!data || data.app !== 'hbd-party') return toast('생일 파티 백업 파일이 아니에요.');
+        const when = data.exportedAt ? fmtTime(data.exportedAt) : '알 수 없음';
+        const msg = `이 백업을 복원할까요?\n\n백업 시각: ${when}\n주인공: ${data.birthdayName || '-'}\n방명록 ${(data.guestbook || []).length}개 · 선물 ${(data.gifts || []).length}개\n\n지금 데이터에 합쳐지고(같은 글·선물은 건너뜀), 주인공 이름과 금지어는 백업 값으로 바뀌어요.`;
+        if (!window.confirm(msg)) return;
+        const btn = $('restoreBtn');
+        btn.disabled = true;
+        toast('복원하는 중…', 2000);
+        try {
+          const res = await fetch('/admin/api/restore', {
+            method: 'POST',
+            headers: { ...authHeader(), 'Content-Type': 'application/json' },
+            body: text,
+          });
+          if (!res.ok) return toast((await errorOf(res)) || '복원에 실패했어요.', 4000);
+          const { result } = await res.json();
+          let done = `복원 완료! 방명록 ${result.guestbook}개, 선물 ${result.gifts}개를 추가했어요`;
+          if (result.skippedGifts) done += ` (선물 ${result.skippedGifts}개는 개수 제한으로 건너뜀)`;
+          toast(done, 4000);
+        } catch {
+          toast('복원에 실패했어요. 다시 시도해 주세요.');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
       $('giftList').addEventListener('click', (e) => {
         const btn = e.target.closest('.gb-del');
         if (!btn || !adminKey) return;
@@ -439,6 +520,11 @@ ${g ? g.name + '님의 선물' : ''}`)) return;
         if (!adminKey) return;
         const { by, ...meta } = g;
         gifts.push(meta);
+        renderGifts();
+      });
+      socket.on('gifts:all', (list) => {
+        if (!adminKey) return;
+        gifts = Array.isArray(list) ? list : [];
         renderGifts();
       });
       socket.on('gift:removed', (id) => {

@@ -1708,6 +1708,12 @@
     if (g.by === myId) toast('선물을 놓았어요! 🎁', 2000);
     else toast(`🎁 ${g.name}님이 선물을 놓고 갔어요! 눌러서 열어보세요`, 2600);
   });
+  socket.on('gifts:all', (list) => {
+    gifts.clear();
+    for (const g of list || []) addGift(g, false);
+    hoverGift = null;
+    if (shownGiftId && !gifts.has(shownGiftId)) closeGift();
+  });
   socket.on('gift:removed', (id) => {
     gifts.delete(id);
     if (hoverGift && hoverGift.id === id) hoverGift = null;

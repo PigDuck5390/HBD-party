@@ -7,6 +7,7 @@ const { Server } = require('socket.io');
 const WORLD = require('./public/world.js');
 const { createGuestbookStore } = require('./storage');
 const { createFilter, normalizeWord } = require('./filter');
+const { makeZip } = require('./zip');
 
 const PORT = Number(process.env.PORT) || 3000;
 const MAX_PLAYERS = Number(process.env.MAX_PLAYERS) || 50;
@@ -54,9 +55,28 @@ const checkAdminKey = (key) => ADMIN_KEY !== '' && crypto.timingSafeEqual(sha256
 
 // IP별 비밀번호 실패 횟수 제한: 5번 틀리면 1분 잠금
 const adminFails = new Map();
-function clientIp(socket) {
-  const fwd = socket.handshake.headers['x-forwarded-for'];
-  return (typeof fwd === 'string' && fwd.split(',')[0].trim()) || socket.handshake.address;
+function ipFrom(headers, address) {
+  const fwd = headers['x-forwarded-for'];
+  return (typeof fwd === 'string' && fwd.split(',')[0].trim()) || address;
+}
+const clientIp = (socket) => ipFrom(socket.handshake.headers, socket.handshake.address);
+
+// 관리자 비밀번호 확인 (소켓 로그인과 백업/복원 API에서 함께 사용)
+function verifyAdmin(ip, key) {
+  if (!ADMIN_KEY) return { ok: false, status: 503, error: '관리자 기능이 꺼져 있어요. (ADMIN_KEY 미설정)' };
+  const now = Date.now();
+  const rec = adminFails.get(ip) || { count: 0, until: 0 };
+  if (rec.until > now) {
+    return { ok: false, status: 429, error: `너무 많이 틀렸어요. ${Math.ceil((rec.until - now) / 1000)}초 후에 다시 시도해 주세요.` };
+  }
+  if (!checkAdminKey(String(key || ''))) {
+    rec.count += 1;
+    if (rec.count >= 5) { rec.count = 0; rec.until = now + 60_000; }
+    adminFails.set(ip, rec);
+    return { ok: false, status: 401, error: '비밀번호가 틀렸어요.' };
+  }
+  adminFails.delete(ip);
+  return { ok: true };
 }
 
 const app = express();
@@ -72,6 +92,147 @@ app.get('/gift/:id.jpg', (req, res) => {
   if (!g) return res.status(404).end();
   res.set('Cache-Control', 'public, max-age=31536000, immutable');
   res.type('image/jpeg').send(g.buf);
+});
+
+// ---------- 관리자 백업/복원 API (헤더 x-admin-key로 인증) ----------
+function adminAuth(req, res, next) {
+  let key = '';
+  try { key = decodeURIComponent(String(req.get('x-admin-key') || '')); } catch { /* 잘못된 값 */ }
+  const auth = verifyAdmin(ipFrom(req.headers, req.socket.remoteAddress), key);
+  if (!auth.ok) return res.status(auth.status).json({ ok: false, error: auth.error });
+  res.set('Cache-Control', 'no-store');
+  next();
+}
+
+const pad2 = (n) => String(n).padStart(2, '0');
+const stamp = (ts) => {
+  const d = new Date(ts);
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
+};
+const koTime = (ts) => {
+  const d = new Date(ts);
+  return `${d.getFullYear()}.${d.getMonth() + 1}.${d.getDate()} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+};
+// 윈도우 메모장에서도 한글이 안 깨지도록 BOM + CRLF 사용
+const BOM = String.fromCharCode(0xfeff);
+const CRLF = String.fromCharCode(13, 10);
+const TAB = String.fromCharCode(9);
+const toCrlf = (s) => s.split(String.fromCharCode(10)).join(CRLF);
+
+// 전체 백업: 다른 서버에도 그대로 복원할 수 있는 JSON (사진 포함)
+app.get('/admin/api/backup', adminAuth, (_req, res) => {
+  const backup = {
+    app: 'hbd-party',
+    version: 1,
+    exportedAt: Date.now(),
+    birthdayName,
+    bannedWords: filter.words,
+    guestbook,
+    gifts: [...gifts.values()].map((g) => ({ ...g.meta, img: g.buf.toString('base64') })),
+  };
+  res.set('Content-Disposition', `attachment; filename="hbd-backup-${stamp(Date.now())}.json"`);
+  res.type('application/json').send(JSON.stringify(backup));
+});
+
+// 추억 보관용: 사진(JPG)과 방명록(TXT)을 묶은 ZIP. 압축 프로그램마다 한글 파일 이름이 깨질 수 있어 이름은 영문/숫자만 사용
+app.get('/admin/api/keepsake', adminAuth, (_req, res) => {
+  const files = [];
+  const photoLines = [];
+  [...gifts.values()]
+    .map((g) => g.meta)
+    .sort((a, b) => a.ts - b.ts)
+    .forEach((m, i) => {
+      const file = `${String(i + 1).padStart(2, '0')}-${stamp(m.ts)}.jpg`;
+      files.push({ name: `photos/${file}`, data: gifts.get(m.id).buf });
+      photoLines.push([file, `${m.name}님의 선물`, koTime(m.ts)].join(TAB));
+    });
+  if (photoLines.length) {
+    files.push({ name: 'photos/list.txt', data: Buffer.from(BOM + photoLines.join(CRLF) + CRLF, 'utf8') });
+  }
+  const entries = [...guestbook]
+    .sort((a, b) => a.ts - b.ts)
+    .map((e) => `[${koTime(e.ts)}] ${e.name}${CRLF}${toCrlf(e.text)}${CRLF}`);
+  const header = `🎂 ${birthdayName}의 생일 파티 방명록 (${guestbook.length}개)${CRLF}${CRLF}`;
+  files.push({ name: 'guestbook.txt', data: Buffer.from(BOM + header + entries.join(CRLF), 'utf8') });
+  res.set('Content-Disposition', `attachment; filename="hbd-keepsake-${stamp(Date.now())}.zip"`);
+  res.type('application/zip').send(makeZip(files));
+});
+
+// 복원: 백업 JSON을 지금 데이터에 합침 (이미 있는 글/선물은 건너뜀). 주인공 이름·금지어는 백업 값으로 바뀜
+const isId = (v) => typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+const isColor = (v) => typeof v === 'string' && /^#[0-9a-fA-F]{6}$/.test(v);
+const MAX_TS = 8.64e15;
+app.post('/admin/api/restore', adminAuth, express.json({ limit: '60mb' }), async (req, res) => {
+  const b = req.body;
+  if (!b || b.app !== 'hbd-party' || !Array.isArray(b.guestbook) || !Array.isArray(b.gifts)) {
+    return res.status(400).json({ ok: false, error: '생일 파티 백업 파일이 아니에요.' });
+  }
+  const result = { guestbook: 0, gifts: 0, skippedGifts: 0 };
+  try {
+    // 방명록
+    const have = new Set(guestbook.map((e) => e.id));
+    for (const e of b.guestbook) {
+      if (!e || !isId(e.id) || have.has(e.id)) continue;
+      const text = cleanMultiline(e.text, 300);
+      if (!text) continue;
+      guestbook.push({
+        id: e.id,
+        name: cleanText(e.name, 12) || '손님',
+        hue: Math.round(num(e.hue, 0, 359, 0)),
+        text,
+        ts: num(e.ts, 0, MAX_TS, Date.now()),
+      });
+      have.add(e.id);
+      result.guestbook += 1;
+    }
+    guestbook.sort((x, y) => y.ts - x.ts);
+    if (guestbook.length > GUESTBOOK_LIMIT) guestbook.length = GUESTBOOK_LIMIT;
+    if (result.guestbook) await store.replaceGuestbook(guestbook);
+
+    // 선물
+    const incoming = b.gifts
+      .filter((g) => g && isId(g.id) && !gifts.has(g.id))
+      .sort((x, y) => num(x.ts, 0, MAX_TS, 0) - num(y.ts, 0, MAX_TS, 0));
+    for (const g of incoming) {
+      const buf = typeof g.img === 'string' ? Buffer.from(g.img, 'base64') : null;
+      if (!buf || buf.length < 100 || buf.length > MAX_GIFT_BYTES || buf[0] !== 0xff || buf[1] !== 0xd8 || buf[2] !== 0xff) continue;
+      if (gifts.size >= MAX_GIFTS) { result.skippedGifts += 1; continue; }
+      const meta = {
+        id: g.id,
+        name: cleanText(g.name, 12) || '손님',
+        hue: Math.round(num(g.hue, 0, 359, 0)),
+        x: Math.round(num(g.x, 0, WORLD.w, WORLD.spawn.x)),
+        y: Math.round(num(g.y, WORLD.wallH + 20, WORLD.h - 8, WORLD.spawn.y)),
+        c: isColor(g.c) ? g.c : GIFT_COLORS[0][0],
+        r: isColor(g.r) ? g.r : GIFT_COLORS[0][1],
+        ts: num(g.ts, 0, MAX_TS, Date.now()),
+      };
+      await store.addGift({ ...meta, img: buf.toString('base64') });
+      gifts.set(meta.id, { meta, buf });
+      result.gifts += 1;
+    }
+
+    // 설정
+    const name = cleanText(b.birthdayName, 20);
+    if (name) {
+      await store.setSetting('birthdayName', name);
+      birthdayName = name;
+    }
+    if (Array.isArray(b.bannedWords)) {
+      filter.set(b.bannedWords.map(String));
+      await store.setSetting('bannedWords', JSON.stringify(filter.words));
+    }
+  } catch (err) {
+    console.error('[restore] 실패:', err.message);
+    return res.status(500).json({ ok: false, error: `복원 중 오류가 났어요: ${err.message}`, result });
+  }
+
+  io.emit('config', { birthdayName });
+  io.emit('guestbook:all', guestbook);
+  io.emit('gifts:all', giftList());
+  io.to('admins').emit('admin:bannedWords', filter.words);
+  console.log(`[restore] 방명록 ${result.guestbook}개, 선물 ${result.gifts}개 복원 (자리 부족으로 건너뛴 선물 ${result.skippedGifts}개)`);
+  res.json({ ok: true, result });
 });
 
 const server = http.createServer(app);
@@ -121,20 +282,8 @@ io.on('connection', (socket) => {
 
   socket.on('admin:login', async (d, ack) => {
     const reply = typeof ack === 'function' ? ack : () => {};
-    if (!ADMIN_KEY) return reply({ ok: false, error: '관리자 기능이 꺼져 있어요. (ADMIN_KEY 미설정)' });
-    const ip = clientIp(socket);
-    const now = Date.now();
-    const rec = adminFails.get(ip) || { count: 0, until: 0 };
-    if (rec.until > now) {
-      return reply({ ok: false, error: `너무 많이 틀렸어요. ${Math.ceil((rec.until - now) / 1000)}초 후에 다시 시도해 주세요.` });
-    }
-    if (!checkAdminKey(String((d && d.key) || ''))) {
-      rec.count += 1;
-      if (rec.count >= 5) { rec.count = 0; rec.until = now + 60_000; }
-      adminFails.set(ip, rec);
-      return reply({ ok: false, error: '비밀번호가 틀렸어요.' });
-    }
-    adminFails.delete(ip);
+    const auth = verifyAdmin(clientIp(socket), d && d.key);
+    if (!auth.ok) return reply({ ok: false, error: auth.error });
     isAdmin = true;
     socket.join('admins');
     // Upstash 화면에서 직접 고친 내용이 있을 수 있으니 저장소에서 다시 읽어 모두에게 동기화
