@@ -44,9 +44,15 @@ const num = (v, min, max, fallback) => {
   return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
 };
 
-// 기본값은 환경 변수, 관리자 페이지에서 바꾸면 저장소에 저장된 값이 우선
-const DEFAULT_BIRTHDAY_NAME = cleanText(process.env.BIRTHDAY_NAME, 20) || '주인공';
-let birthdayName = DEFAULT_BIRTHDAY_NAME;
+// 파티 설정: 기본값은 환경 변수, 관리자 페이지에서 바꾸면 저장소에 저장된 값이 우선
+// - birthdayName: 주인공 이름 (예전 이름 그대로 사용 — 저장된 데이터와 호환)
+// - partyType: 파티 종류 (생일, 입사, 졸업 …) → "OO의 입사 파티"
+// - bannerText: 벽에 걸린 플랜카드 문구
+let birthdayName = cleanText(process.env.BIRTHDAY_NAME, 20) || '주인공';
+let partyType = cleanText(process.env.PARTY_TYPE, 10) || '생일';
+let bannerText = cleanText(process.env.BANNER_TEXT, 24) || 'HAPPY BIRTHDAY';
+const partyConfig = () => ({ birthdayName, partyType, bannerText });
+const partyTitle = () => `${birthdayName}의 ${partyType} 파티`;
 const ADMIN_KEY = String(process.env.ADMIN_KEY || '');
 
 // 관리자 비밀번호 비교 (길이와 상관없이 일정한 시간)
@@ -125,7 +131,7 @@ app.get('/admin/api/backup', adminAuth, (_req, res) => {
     app: 'hbd-party',
     version: 1,
     exportedAt: Date.now(),
-    birthdayName,
+    ...partyConfig(),
     bannedWords: filter.words,
     guestbook,
     gifts: [...gifts.values()].map((g) => ({ ...g.meta, img: g.buf.toString('base64') })),
@@ -152,7 +158,7 @@ app.get('/admin/api/keepsake', adminAuth, (_req, res) => {
   const entries = [...guestbook]
     .sort((a, b) => a.ts - b.ts)
     .map((e) => `[${koTime(e.ts)}] ${e.name}${CRLF}${toCrlf(e.text)}${CRLF}`);
-  const header = `🎂 ${birthdayName}의 생일 파티 방명록 (${guestbook.length}개)${CRLF}${CRLF}`;
+  const header = `🎉 ${partyTitle()} 방명록 (${guestbook.length}개)${CRLF}${CRLF}`;
   files.push({ name: 'guestbook.txt', data: Buffer.from(BOM + header + entries.join(CRLF), 'utf8') });
   res.set('Content-Disposition', `attachment; filename="hbd-keepsake-${stamp(Date.now())}.zip"`);
   res.type('application/zip').send(makeZip(files));
@@ -165,7 +171,7 @@ const MAX_TS = 8.64e15;
 app.post('/admin/api/restore', adminAuth, express.json({ limit: '60mb' }), async (req, res) => {
   const b = req.body;
   if (!b || b.app !== 'hbd-party' || !Array.isArray(b.guestbook) || !Array.isArray(b.gifts)) {
-    return res.status(400).json({ ok: false, error: '생일 파티 백업 파일이 아니에요.' });
+    return res.status(400).json({ ok: false, error: '파티 백업 파일이 아니에요.' });
   }
   const result = { guestbook: 0, gifts: 0, skippedGifts: 0 };
   try {
@@ -218,6 +224,16 @@ app.post('/admin/api/restore', adminAuth, express.json({ limit: '60mb' }), async
       await store.setSetting('birthdayName', name);
       birthdayName = name;
     }
+    const type = cleanText(b.partyType, 10);
+    if (type) {
+      await store.setSetting('partyType', type);
+      partyType = type;
+    }
+    const banner = cleanText(b.bannerText, 24);
+    if (banner) {
+      await store.setSetting('bannerText', banner);
+      bannerText = banner;
+    }
     if (Array.isArray(b.bannedWords)) {
       filter.set(b.bannedWords.map(String));
       await store.setSetting('bannedWords', JSON.stringify(filter.words));
@@ -227,7 +243,7 @@ app.post('/admin/api/restore', adminAuth, express.json({ limit: '60mb' }), async
     return res.status(500).json({ ok: false, error: `복원 중 오류가 났어요: ${err.message}`, result });
   }
 
-  io.emit('config', { birthdayName });
+  io.emit('config', partyConfig());
   io.emit('guestbook:all', guestbook);
   io.emit('gifts:all', giftList());
   io.to('admins').emit('admin:bannedWords', filter.words);
@@ -274,7 +290,7 @@ function spawnPoint() {
 }
 
 io.on('connection', (socket) => {
-  socket.emit('hello', { birthdayName, online: players.size, gifts: giftList() });
+  socket.emit('hello', { ...partyConfig(), online: players.size, gifts: giftList() });
 
   let player = null;
   let isAdmin = false;
@@ -293,24 +309,33 @@ io.on('connection', (socket) => {
     } catch (err) {
       console.error('[guestbook] 다시 불러오기 실패:', err.message);
     }
-    reply({ ok: true, guestbook, birthdayName, gifts: giftList(), bannedWords: filter.words });
+    reply({ ok: true, guestbook, ...partyConfig(), gifts: giftList(), bannedWords: filter.words });
   });
 
-  socket.on('admin:setName', async (d, ack) => {
+  // 파티 설정 (주인공 이름, 파티 종류, 플랜카드 문구)
+  socket.on('admin:setParty', async (d, ack) => {
     const reply = typeof ack === 'function' ? ack : () => {};
     if (!isAdmin) return reply({ ok: false, error: '관리자만 바꿀 수 있어요.' });
     const name = cleanText(d && d.name, 20);
-    if (!name) return reply({ ok: false, error: '이름을 입력해 주세요.' });
+    const type = cleanText(d && d.partyType, 10);
+    const banner = cleanText(d && d.bannerText, 24);
+    if (!name) return reply({ ok: false, error: '주인공 이름을 입력해 주세요.' });
+    if (!type) return reply({ ok: false, error: '파티 종류를 입력해 주세요.' });
+    if (!banner) return reply({ ok: false, error: '플랜카드 문구를 입력해 주세요.' });
     try {
       await store.setSetting('birthdayName', name);
+      await store.setSetting('partyType', type);
+      await store.setSetting('bannerText', banner);
     } catch (err) {
       console.error('[settings] 저장 실패:', err.message);
       return reply({ ok: false, error: '저장하지 못했어요. 잠시 후 다시 시도해 주세요.' });
     }
     birthdayName = name;
-    io.emit('config', { birthdayName });
-    console.log(`[settings] 주인공 이름 변경: ${name}`);
-    reply({ ok: true, birthdayName });
+    partyType = type;
+    bannerText = banner;
+    io.emit('config', partyConfig());
+    console.log(`[settings] 파티 설정 변경: ${partyTitle()} / 플랜카드 "${bannerText}"`);
+    reply({ ok: true, ...partyConfig() });
   });
 
   socket.on('admin:logout', () => {
@@ -420,7 +445,7 @@ io.on('connection', (socket) => {
 
     socket.emit('welcome', {
       id: socket.id,
-      birthdayName,
+      ...partyConfig(),
       players: [...players.values()].map(publicPlayer),
       guestbook,
     });
@@ -515,10 +540,11 @@ io.on('connection', (socket) => {
     console.error('[filter] 불러오기 실패:', err.message);
   }
   try {
-    const saved = cleanText(await store.getSetting('birthdayName'), 20);
-    if (saved) birthdayName = saved;
+    birthdayName = cleanText(await store.getSetting('birthdayName'), 20) || birthdayName;
+    partyType = cleanText(await store.getSetting('partyType'), 10) || partyType;
+    bannerText = cleanText(await store.getSetting('bannerText'), 24) || bannerText;
   } catch (err) {
     console.error('[settings] 불러오기 실패:', err.message);
   }
-  server.listen(PORT, () => console.log(`🎂 생일 파티 서버: http://localhost:${PORT}  (주인공: ${birthdayName})`));
+  server.listen(PORT, () => console.log(`🎉 파티 서버: http://localhost:${PORT}  (${partyTitle()})`));
 })();

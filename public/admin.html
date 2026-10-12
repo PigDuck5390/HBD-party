@@ -56,8 +56,8 @@
     }
     .settings label { display: block; font-size: 15px; margin-bottom: 8px; }
     .settings .row { display: flex; gap: 8px; }
-    #bdNameInput {
-      flex: 1;
+    .party-input {
+      width: 100%;
       min-width: 0;
       border: 2px solid #f3dbe6;
       border-radius: 12px;
@@ -65,7 +65,24 @@
       font-size: 16px;
       outline: none;
     }
-    #bdNameInput:focus { border-color: var(--pink); }
+    .party-input:focus { border-color: var(--pink); }
+    .party-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+    .party-grid .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .party-grid .field.wide { grid-column: 1 / -1; }
+    .party-grid .field span { font-size: 13px; opacity: 0.7; }
+    .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .presets .pill { font-size: 13px; padding: 5px 11px; }
+    .preview-line {
+      margin: 10px 0 0;
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: #fff1f6;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .preview-line b { color: var(--pink-dark); font-weight: normal; }
+    .party-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+    @media (max-width: 420px) { .party-grid { grid-template-columns: 1fr; } }
     .settings .hint { margin: 6px 0 0; font-size: 12px; opacity: 0.55; }
     #wordInput {
       flex: 1;
@@ -154,13 +171,33 @@
           <button type="button" id="logoutBtn" class="pill">로그아웃</button>
         </div>
       </div>
-      <form id="nameForm" class="settings" autocomplete="off">
-        <label for="bdNameInput">🎂 주인공 이름</label>
-        <div class="row">
-          <input id="bdNameInput" maxlength="20" placeholder="주인공 이름 (최대 20자)">
-          <button id="nameBtn" type="submit" class="primary small">저장</button>
+      <form id="partyForm" class="settings" autocomplete="off">
+        <label>🎉 파티 설정</label>
+        <div class="presets" id="presets">
+          <button type="button" class="pill" data-type="생일" data-banner="HAPPY BIRTHDAY">🎂 생일</button>
+          <button type="button" class="pill" data-type="입사" data-banner="WELCOME ABOARD">💼 입사</button>
+          <button type="button" class="pill" data-type="환영" data-banner="WELCOME!">🙌 환영</button>
+          <button type="button" class="pill" data-type="송별" data-banner="THANK YOU &amp; GOOD LUCK">👋 송별</button>
+          <button type="button" class="pill" data-type="졸업" data-banner="CONGRATULATIONS">🎓 졸업</button>
+          <button type="button" class="pill" data-type="승진" data-banner="CONGRATULATIONS">📈 승진</button>
+          <button type="button" class="pill" data-type="결혼 축하" data-banner="JUST MARRIED">💍 결혼</button>
         </div>
-        <p class="hint">저장하면 케이크·제목에 바로 반영되고, 접속 중인 모든 화면에도 즉시 바뀌어요.</p>
+        <div class="party-grid">
+          <label class="field"><span>주인공 이름</span>
+            <input id="bdNameInput" class="party-input" maxlength="20" placeholder="예: 김찬">
+          </label>
+          <label class="field"><span>파티 종류</span>
+            <input id="partyTypeInput" class="party-input" maxlength="10" placeholder="예: 생일, 입사">
+          </label>
+          <label class="field wide"><span>플랜카드 문구 (벽에 걸리는 글자)</span>
+            <input id="bannerInput" class="party-input" maxlength="24" placeholder="예: HAPPY BIRTHDAY, 입사를 축하합니다">
+          </label>
+        </div>
+        <p class="preview-line" id="partyPreview"></p>
+        <div class="party-actions">
+          <button id="partyBtn" type="submit" class="primary small">저장</button>
+        </div>
+        <p class="hint">위 버튼을 누르면 파티 종류와 플랜카드가 채워져요. 원하는 대로 고친 뒤 저장하면 접속 중인 모든 화면에 바로 반영돼요.</p>
       </form>
       <form id="wordForm" class="settings" autocomplete="off">
         <label for="wordInput">🚫 금지어 <small id="wordTotal" style="opacity:.55"></small></label>
@@ -179,7 +216,7 @@
           <button type="button" id="restoreBtn" class="pill">⬆ 백업 복원하기</button>
           <input id="restoreFile" type="file" accept=".json,application/json" hidden>
         </div>
-        <p class="hint">전체 백업(.json)은 다른 서버에 그대로 복원할 수 있어요. 모아 받기(.zip)는 사진(JPG)과 방명록(TXT)을 추억용으로 보관할 때 좋아요.<br>복원하면 지금 데이터에 합쳐지고(같은 글·선물은 건너뜀), 주인공 이름과 금지어는 백업 값으로 바뀌어요.</p>
+        <p class="hint">전체 백업(.json)은 다른 서버에 그대로 복원할 수 있어요. 모아 받기(.zip)는 사진(JPG)과 방명록(TXT)을 추억용으로 보관할 때 좋아요.<br>복원하면 지금 데이터에 합쳐지고(같은 글·선물은 건너뜀), 파티 설정과 금지어는 백업 값으로 바뀌어요.</p>
       </div>
       <h2 class="section-title">🎁 선물 사진 <small id="giftTotal"></small></h2>
       <ul id="giftList"></ul>
@@ -343,7 +380,7 @@
           renderGifts();
           bannedWords = res.bannedWords || [];
           renderWords();
-          if (res.birthdayName) $('bdNameInput').value = res.birthdayName;
+          fillParty(res);
           $('keyInput').value = '';
           $('loginError').textContent = '';
           $('loginForm').hidden = true;
@@ -367,17 +404,49 @@
         $('keyInput').focus();
       });
 
-      $('nameForm').addEventListener('submit', (e) => {
+      // 파티 설정
+      const partyInputs = ['bdNameInput', 'partyTypeInput', 'bannerInput'];
+      function fillParty(d) {
+        if (!d) return;
+        // 입력 중인 칸은 덮어쓰지 않음
+        if (d.birthdayName && document.activeElement !== $('bdNameInput')) $('bdNameInput').value = d.birthdayName;
+        if (d.partyType && document.activeElement !== $('partyTypeInput')) $('partyTypeInput').value = d.partyType;
+        if (d.bannerText && document.activeElement !== $('bannerInput')) $('bannerInput').value = d.bannerText;
+        updatePreview();
+      }
+      function updatePreview() {
+        const name = $('bdNameInput').value.trim() || '주인공';
+        const type = $('partyTypeInput').value.trim() || '파티';
+        const banner = $('bannerInput').value.trim() || '-';
+        const p = $('partyPreview');
+        p.textContent = '';
+        const t = document.createElement('b');
+        t.textContent = `${name}의 ${type} 파티`;
+        const bn = document.createElement('b');
+        bn.textContent = banner;
+        p.append('제목: ', t, document.createElement('br'), '플랜카드: ', bn);
+      }
+      partyInputs.forEach((id) => $(id).addEventListener('input', updatePreview));
+      $('presets').addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-type]');
+        if (!btn) return;
+        $('partyTypeInput').value = btn.dataset.type;
+        $('bannerInput').value = btn.dataset.banner;
+        updatePreview();
+      });
+      $('partyForm').addEventListener('submit', (e) => {
         e.preventDefault();
-        const name = $('bdNameInput').value.trim();
-        if (!name) { $('bdNameInput').focus(); return; }
-        $('nameBtn').disabled = true;
-        socket.timeout(8000).emit('admin:setName', { name }, (err, res) => {
-          $('nameBtn').disabled = false;
+        const [name, partyType, bannerText] = partyInputs.map((id) => $(id).value.trim());
+        const empty = partyInputs.find((id) => !$(id).value.trim());
+        if (empty) { $(empty).focus(); return; }
+        $('partyBtn').disabled = true;
+        socket.timeout(8000).emit('admin:setParty', { name, partyType, bannerText }, (err, res) => {
+          $('partyBtn').disabled = false;
           if (err) return toast('저장에 실패했어요. 다시 시도해 주세요.');
           if (!res || !res.ok) return toast((res && res.error) || '저장에 실패했어요.');
-          $('bdNameInput').value = res.birthdayName;
-          toast(`주인공 이름을 "${res.birthdayName}"(으)로 바꿨어요 🎉`);
+          partyInputs.forEach((id) => $(id).blur());
+          fillParty(res);
+          toast(`"${res.birthdayName}의 ${res.partyType} 파티"로 저장했어요 🎉`);
         });
       });
 
@@ -435,9 +504,9 @@
         } catch {
           return toast('백업 파일을 읽지 못했어요.');
         }
-        if (!data || data.app !== 'hbd-party') return toast('생일 파티 백업 파일이 아니에요.');
+        if (!data || data.app !== 'hbd-party') return toast('파티 백업 파일이 아니에요.');
         const when = data.exportedAt ? fmtTime(data.exportedAt) : '알 수 없음';
-        const msg = `이 백업을 복원할까요?\n\n백업 시각: ${when}\n주인공: ${data.birthdayName || '-'}\n방명록 ${(data.guestbook || []).length}개 · 선물 ${(data.gifts || []).length}개\n\n지금 데이터에 합쳐지고(같은 글·선물은 건너뜀), 주인공 이름과 금지어는 백업 값으로 바뀌어요.`;
+        const msg = `이 백업을 복원할까요?\n\n백업 시각: ${when}\n파티: ${data.birthdayName || '-'}의 ${data.partyType || '생일'} 파티\n방명록 ${(data.guestbook || []).length}개 · 선물 ${(data.gifts || []).length}개\n\n지금 데이터에 합쳐지고(같은 글·선물은 건너뜀), 파티 설정(주인공·종류·플랜카드)과 금지어는 백업 값으로 바뀌어요.`;
         if (!window.confirm(msg)) return;
         const btn = $('restoreBtn');
         btn.disabled = true;
@@ -509,7 +578,7 @@ ${g ? g.name + '님의 선물' : ''}`)) return;
         setTimeout(render, 250);
       });
       socket.on('config', (d) => {
-        if (adminKey && d && d.birthdayName && document.activeElement !== $('bdNameInput')) $('bdNameInput').value = d.birthdayName;
+        if (adminKey) fillParty(d);
       });
       socket.on('admin:bannedWords', (words) => {
         if (!adminKey) return;

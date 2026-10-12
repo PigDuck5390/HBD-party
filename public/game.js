@@ -51,6 +51,9 @@
   let me = null;
   let joined = false;
   let birthdayName = '주인공';
+  let partyType = '생일';
+  let bannerText = 'HAPPY BIRTHDAY';
+  const partyTitle = () => `${birthdayName}의 ${partyType} 파티`;
   let myHue = Math.floor(Math.random() * 360);
   let nearLauncher = -1;
   let guestbook = [];
@@ -374,15 +377,54 @@
       }
     });
 
-    ctx.font = `50px ${FONT}`;
+    const b = bannerLayout();
+    ctx.font = `${b.size}px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = 10;
+    ctx.lineWidth = Math.max(6, b.size / 5);
     ctx.strokeStyle = '#e05a8a';
-    ctx.strokeText('HAPPY BIRTHDAY', W.w / 2, 104);
     ctx.fillStyle = '#ffffff';
-    ctx.fillText('HAPPY BIRTHDAY', W.w / 2, 104);
+    b.lines.forEach((line, i) => {
+      ctx.strokeText(line, W.w / 2, b.ys[i], BANNER_MAX_W);
+      ctx.fillText(line, W.w / 2, b.ys[i], BANNER_MAX_W);
+    });
+  }
+
+  // 플랜카드 문구 배치: 휴대폰 화면(맵 가로 약 620px만 보임)에서도 잘리지 않도록 폭을 제한하고,
+  // 길면 글자를 줄이고 그래도 길면 두 줄로 나눔. 문구가 바뀔 때만 다시 계산
+  const BANNER_MAX_W = 500;
+  let bannerCache = null;
+  function bannerLayout() {
+    if (bannerCache && bannerCache.text === bannerText) return bannerCache;
+    const widthAt = (s, size) => {
+      ctx.font = `${size}px ${FONT}`;
+      return ctx.measureText(s).width;
+    };
+    const fit = (lines, max, min) => {
+      const widest = Math.max(...lines.map((l) => widthAt(l, max)));
+      return Math.max(min, Math.min(max, Math.floor((max * BANNER_MAX_W) / widest)));
+    };
+    let layout;
+    const one = fit([bannerText], 50, 22);
+    if (widthAt(bannerText, 50) <= BANNER_MAX_W || one >= 40) {
+      layout = { lines: [bannerText], size: one, ys: [104] };
+    } else {
+      // 가운데에서 가장 가까운 띄어쓰기에서 나누고, 없으면 글자 수 절반에서 나눔
+      const chars = Array.from(bannerText);
+      const mid = chars.length / 2;
+      let cut = -1;
+      chars.forEach((c, i) => {
+        if (c === ' ' && (cut === -1 || Math.abs(i - mid) < Math.abs(cut - mid))) cut = i;
+      });
+      const lines = cut > 0
+        ? [chars.slice(0, cut).join(''), chars.slice(cut + 1).join('')]
+        : [chars.slice(0, Math.ceil(mid)).join(''), chars.slice(Math.ceil(mid)).join('')];
+      const size = fit(lines, 32, 20);
+      layout = { lines, size, ys: [104 - size * 1.05, 104] };
+    }
+    bannerCache = { text: bannerText, ...layout };
+    return bannerCache;
   }
 
   // ---------- 그리기: 케이크 ----------
@@ -1318,10 +1360,14 @@
     }, 15000);
   }
 
-  function setBirthdayName(name) {
-    birthdayName = name;
-    document.querySelectorAll('.bd-name').forEach((el) => (el.textContent = name));
-    document.title = `${name}의 생일 파티 🎂`;
+  // 파티 설정(주인공 이름·파티 종류·플랜카드) 반영
+  function setParty(d) {
+    if (!d) return;
+    if (d.birthdayName) birthdayName = d.birthdayName;
+    if (d.partyType) partyType = d.partyType;
+    if (d.bannerText) bannerText = d.bannerText;
+    document.querySelectorAll('.party-title').forEach((el) => (el.textContent = partyTitle()));
+    document.title = `${partyTitle()} 🎉`;
   }
 
   // 채팅
@@ -1601,7 +1647,7 @@
     }
   });
   socket.on('hello', (d) => {
-    setBirthdayName(d.birthdayName);
+    setParty(d);
     gifts.clear();
     for (const g of d.gifts || []) addGift(g, false);
     if (!joined) {
@@ -1624,7 +1670,7 @@
   socket.on('welcome', (d) => {
     const first = !joined;
     myId = d.id;
-    setBirthdayName(d.birthdayName);
+    setParty(d);
     players.clear();
     for (const p of d.players) addPlayer(p);
     me = players.get(myId);
@@ -1638,7 +1684,7 @@
     $('hud').hidden = false;
     updateCamera(0, true);
     if (first) {
-      logLine('', 0, `🎉 ${birthdayName}의 생일 파티에 오신 걸 환영해요!`, true);
+      logLine('', 0, `🎉 ${partyTitle()}에 오신 걸 환영해요!`, true);
       toast('방향키로 움직이고, 폭죽 앞에서 🎆 버튼을 눌러보세요!', 4000);
     }
   });
@@ -1700,7 +1746,7 @@
     }, 250);
   });
   socket.on('config', (d) => {
-    if (d && d.birthdayName) setBirthdayName(d.birthdayName);
+    setParty(d);
   });
   socket.on('gift:new', (g) => {
     const { by, ...meta } = g;
@@ -1728,7 +1774,10 @@
   });
 
   // 시작
-  if (document.fonts && document.fonts.load) document.fonts.load(`20px ${FONT}`).catch(() => {});
+  if (document.fonts && document.fonts.load) {
+    // 글꼴이 늦게 도착하면 글자 폭이 달라지므로 플랜카드 배치를 다시 계산
+    document.fonts.load(`20px ${FONT}`).then(() => { bannerCache = null; }).catch(() => {});
+  }
   resize();
   requestAnimationFrame(frame);
 })();
